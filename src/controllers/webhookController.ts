@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
 import { fetchPRDetails } from "../services/githubService";
+import { analyzeFiles } from "../services/openaiService";
 
 //webhook handling
 export const handleWebhook = (req: Request, res: Response) => {
@@ -22,26 +23,26 @@ export const handleWebhook = (req: Request, res: Response) => {
         return res.status(200).send("Event ignored");
     }
 
-    //log 
     const { action, pull_request: pr, repository: repo } = req.body;
     console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
 
-    //retrieve and process pr data
     const processPRData = async (pr: any, repo: any, installationId: number) => {
         const { prData, files, reviews } = await fetchPRDetails(repo.owner.login, repo.name, pr.number, installationId);
 
-        //temporary console file reading
-        files.forEach((file: any) => {
-            console.log("file object:", file);
-            console.log("filename:", file.filename);
-            console.log("status:", file.status);
-            console.log("additions:", file.additions, "deletions:", file.deletions, "changes:", file.changes);
-            console.log("raw_url:", file.raw_url);
-            console.log("blob_url:", file.blob_url);
-        });
+        console.log(`Fetched ${files.length} files for PR #${pr.number}`);
 
-        // Integrate AI review logic here
+        const analysis = await analyzeFiles(files);
 
+        console.log("AI Review for PR:", analysis);
+
+        // optionally post back as a comment to PR:
+        await postPullRequestComment(
+            repo.owner.login,
+            repo.name,
+            pr.number,
+            `### AI Review\n\n${analysis}`,
+            installationId
+        );
     };
 
     //handle pr action
@@ -58,4 +59,19 @@ export const handleWebhook = (req: Request, res: Response) => {
     }
 
     res.sendStatus(200);
+};
+
+// post comment to PR
+const postPullRequestComment = async (owner: string, repo: string, prNumber: number, comment: string, installationId: number) => {
+    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.GITHUB_TOKEN}`,
+        },
+        body: JSON.stringify({
+            body: comment,
+        }),
+    });
+    console.log("Comment posted:", response);
 };

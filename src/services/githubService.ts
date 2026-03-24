@@ -60,14 +60,69 @@ const getInstallationToken = async (installationId: number) => {
 
 //fetch pr details from url strings from webhook
 //used by /controllers/webhookController.ts
-export const fetchPRDetails = async (owner: string, repo: string, prNumber: number, installationId: number) => {
+export const fetchPRDetails = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  installationId: number
+) => {
   const token = await getInstallationToken(installationId);
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+  };
 
-  const prResponse = await axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers });
-  const filesResponse = await axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`, { headers });
-  const reviewsResponse = await axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { headers });
+  const prResponse = await axios.get(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
+    { headers }
+  );
 
-  //return pr data, files, and reviews
-  return { prData: prResponse.data, files: filesResponse.data, reviews: reviewsResponse.data };
+  const filesResponse = await axios.get(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`,
+    { headers }
+  );
+  const files = filesResponse.data;
+
+  // Fetch content for each changed file
+  const fileContents = await Promise.all(
+    files
+      .filter((f: any) => f.status !== "removed")
+      .map(async (f: any) => {
+        if (!f.raw_url) return { ...f, content: null };
+        const r = await axios.get(f.raw_url, { headers });
+        return { ...f, content: r.data };
+      })
+  );
+
+  const reviewsResponse = await axios.get(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
+    { headers }
+  );
+
+  return {
+    prData: prResponse.data,
+    files: fileContents,
+    reviews: reviewsResponse.data,
+  };
+};
+
+//post pull request comment to github
+export const postPullRequestComment = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  body: string,
+  installationId: number
+) => {
+  const token = await getInstallationToken(installationId);
+  await axios.post(
+    `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+    { body },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+    }
+  );
 };
