@@ -4,15 +4,18 @@ A GitHub webhook-based application that uses AI to automatically review pull req
 
 ## About
 
-This project is built by a software engineering student exploring AI tools. It integrates with GitHub webhooks to receive PR events, fetches PR data via the GitHub API, and uses OpenAI's API to generate AI-powered code reviews.
+This project is built by a software engineering student exploring AI tools. It integrates with GitHub webhooks to receive PR events, fetches PR data via the GitHub API, analyzes changed files using OpenAI's API, and posts AI-generated code reviews as comments on the PR.
 
 ## Features
 
 - Receives GitHub webhook events for pull requests
 - Authenticates using a GitHub App
 - Fetches PR details, changed files, and existing reviews
-- Integrates with OpenAI for AI analysis (placeholder for future implementation)
-- Logs PR information for debugging and development
+- Analyzes file contents with OpenAI for code review suggestions
+- Posts AI-generated reviews as comments on the PR
+- Configurable OpenAI settings (model, tokens, caching, file limits)
+- Bypasses large files to avoid token limits
+- Caches OpenAI responses for identical file sets
 
 ## Prerequisites
 
@@ -42,6 +45,15 @@ This project is built by a software engineering student exploring AI tools. It i
    GITHUB_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...your_private_key...\n-----END RSA PRIVATE KEY-----
    GITHUB_WEBHOOK_SECRET=your_webhook_secret
    OPENAI_API_KEY=your_openai_api_key
+   # Optional OpenAI configs (defaults provided)
+   OPENAI_MODEL=gpt-4o-mini
+   OPENAI_MAX_TOKENS=1200
+   OPENAI_TEMPERATURE=0.2
+   OPENAI_BYPASS_LARGE_FILES=true
+   OPENAI_ENABLE_CACHE=true
+   OPENAI_FILE_CONTENT_SIZE_LIMIT=16000
+   OPENAI_TOTAL_FILES_LIMIT=8
+   OPENAI_PROMPT_PREFIX="You are an expert code reviewer..."
    ```
 
 ## Usage
@@ -64,13 +76,14 @@ This project is built by a software engineering student exploring AI tools. It i
 
 4. Install the GitHub App on your repository.
 
-5. Create or update a pull request in the repository to trigger the webhook. Check the server logs for PR data processing.
+5. Create or update a pull request in the repository to trigger the webhook. The app will automatically analyze the changed files and post an AI-generated review comment on the PR.
 
 ## Configuration
 
-- **GitHub App Setup**: Create an app in GitHub Developer settings. Set permissions for Pull requests (read/write) and Contents (read). Subscribe to "Pull request" events.
+- **GitHub App Setup**: Create an app in GitHub Developer settings. Set permissions for Pull requests (read/write), Contents (read), and Issues (read/write). Subscribe to "Pull request" events.
 - **Environment Variables**: Ensure `.env` is not committed (it's already in `.gitignore`).
 - **Webhook Verification**: The app verifies webhook signatures for security.
+- **OpenAI Configuration**: Customize AI behavior via env vars (e.g., model selection, token limits, caching). Defaults are optimized for cost and performance.
 
 ## Development
 
