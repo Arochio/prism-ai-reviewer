@@ -15,5 +15,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-//testing stuff
+
 app.post("/webhook", handleWebhook);
