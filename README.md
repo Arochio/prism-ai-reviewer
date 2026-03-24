@@ -1,4 +1,4 @@
-# Prism AI Reviewer
+# PRism AI Reviewer
 
 A GitHub webhook-based application that uses AI to automatically review pull requests.
 
