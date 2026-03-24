@@ -31,6 +31,7 @@ const generateJWT = () => {
 const getInstallationToken = async (installationId: number) => {
   const jwtToken = generateJWT();
 
+  console.log(installationId);
   if (!installationId || Number.isNaN(installationId)) {
     throw new Error("Invalid installationId: " + installationId);
   }
@@ -115,14 +116,27 @@ export const postPullRequestComment = async (
   installationId: number
 ) => {
   const token = await getInstallationToken(installationId);
-  await axios.post(
-    `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
-    { body },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-      },
-    }
-  );
+  try {
+    await axios.post(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+      { body },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    console.log("Comment posted successfully");
+  } catch (err: any) {
+    console.error("Failed to post PR comment", {
+      owner,
+      repo,
+      prNumber,
+      installationId,
+      status: err.response?.status,
+      data: err.response?.data,
+    });
+    throw err;
+  }
 };

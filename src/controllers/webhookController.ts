@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { fetchPRDetails } from "../services/githubService";
+import { fetchPRDetails, postPullRequestComment } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 
 //webhook handling
@@ -59,19 +59,4 @@ export const handleWebhook = (req: Request, res: Response) => {
     }
 
     res.sendStatus(200);
-};
-
-// post comment to PR
-const postPullRequestComment = async (owner: string, repo: string, prNumber: number, comment: string, installationId: number) => {
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.GITHUB_TOKEN}`,
-        },
-        body: JSON.stringify({
-            body: comment,
-        }),
-    });
-    console.log("Comment posted:", response);
 };
