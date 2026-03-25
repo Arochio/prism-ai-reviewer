@@ -1,5 +1,6 @@
 import { Pinecone } from '@pinecone-database/pinecone';
 import OpenAI from 'openai';
+import { openAIConfig } from '../config/openai.config';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
@@ -35,7 +36,7 @@ export const storeEmbedding = async (id: string, vector: number[], metadata: any
 };
 
 // Non-critical: returns empty array on failure so analysis is not blocked
-export const querySimilar = async (vector: number[], topK: number = 5): Promise<{ metadata?: Record<string, any> }[]> => {
+export const querySimilar = async (vector: number[], topK: number = openAIConfig.vectorDbTopK): Promise<{ metadata?: Record<string, any> }[]> => {
   try {
     const index = pinecone.index(process.env.PINECONE_INDEX_NAME!);
     const queryResponse = await index.query({ vector, topK, includeMetadata: true });

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import { fetchPRDetails, postPullRequestComment } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
+import { retryWithBackoff } from "../utils/retry";
 
 //webhook handling
 export const handleWebhook = (req: Request, res: Response) => {
@@ -53,8 +54,13 @@ export const handleWebhook = (req: Request, res: Response) => {
             return res.status(400).send("Missing installation.id");
         }
 
-        processPRData(pr, repo, installationId).catch((err) => {
-            console.error("processPRData error", {
+        retryWithBackoff(
+            () => processPRData(pr, repo, installationId),
+            3,
+            1000,
+            `PR #${pr.number} analysis`
+        ).catch((err) => {
+            console.error("processPRData failed after all retries", {
                 prNumber: pr.number,
                 repo: repo.full_name,
                 action,
