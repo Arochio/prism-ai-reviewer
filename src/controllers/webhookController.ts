@@ -57,6 +57,41 @@ const getErrorStack = (error: unknown): string | undefined => {
     return undefined;
 };
 
+const isValidPRPayload = (body: unknown): body is WebhookPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const pr = b.pull_request as Record<string, unknown> | undefined;
+    if (!pr || typeof pr.number !== 'number' || typeof pr.title !== 'string') return false;
+    if (!pr.user || typeof (pr.user as Record<string, unknown>).login !== 'string') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidIssueCommentPayload = (body: unknown): body is IssueCommentPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const comment = b.comment as Record<string, unknown> | undefined;
+    if (!comment || typeof comment.id !== 'number' || typeof comment.body !== 'string') return false;
+    if (!comment.user || typeof (comment.user as Record<string, unknown>).login !== 'string') return false;
+
+    const issue = b.issue as Record<string, unknown> | undefined;
+    if (!issue || typeof issue.number !== 'number') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
 // Limits the number of inline comments posted per PR event to reduce noise.
 const MAX_INLINE_COMMENTS = 3;
 
@@ -129,56 +164,37 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     }));
 };
 
-//webhook handling
-export const handleWebhook = (req: Request, res: Response) => {
-    const signature = req.headers["x-hub-signature-256"] as string;
+// Validates the webhook signature against the configured secret.
+const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    if (!secret) return true;
 
-    //github webhook secret authorization
-    if (secret) {
-        const hmac = crypto.createHmac("sha256", secret);
-        const digest = "sha256=" + hmac.update(JSON.stringify(req.body)).digest("hex");
-        if (signature !== digest) {
-            return res.status(401).send("Unauthorized");
-        }
-    }
+    const signature = req.headers["x-hub-signature-256"] as string;
+    const hmac = crypto.createHmac("sha256", secret);
+    const digest = "sha256=" + hmac.update(JSON.stringify(req.body)).digest("hex");
+    return signature === digest;
+};
 
-    const event = req.headers["x-github-event"] as string;
+// Returns a validated positive integer installation ID, or null if invalid.
+const validateInstallationId = (installation?: { id?: number }): number | null => {
+    const id = installation?.id;
+    if (!id || typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return null;
+    return id;
+};
 
-    // Handle feedback via issue comment replies.
-    if (event === "issue_comment") {
-        const icPayload = req.body as IssueCommentPayload;
-        if (icPayload.action === "created" && icPayload.issue.pull_request) {
-            handleFeedbackComment(icPayload).catch((err: unknown) => {
-                console.error("Feedback processing failed", {
-                    commentId: icPayload.comment.id,
-                    message: getErrorMessage(err),
-                });
-            });
-        }
-        return res.sendStatus(200);
-    }
+// Executes end-to-end PR analysis and posts summary plus inline comments.
+const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
+    const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
 
-    //handle if event isnt a pr
-    if (event !== "pull_request") {
-        return res.status(200).send("Event ignored");
-    }
+    console.log(`Fetched ${files.length} files for PR #${prDataPayload.number}`);
 
-    const payload = req.body as WebhookPayload;
-    const { action, pull_request: pr, repository: repo } = payload;
-    console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
+    const analysis = await analyzeFiles(files, prDataPayload.number);
 
-    // Executes end-to-end PR analysis and posts summary plus inline comments.
-    const processPRData = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
-        const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
+    console.log("AI Review for PR:", analysis);
 
-        console.log(`Fetched ${files.length} files for PR #${prDataPayload.number}`);
-
-        const analysis = await analyzeFiles(files, prDataPayload.number);
-
-        console.log("AI Review for PR:", analysis);
-
-        // optionally post back as a comment to PR:
+    // Post results independently so a comment failure doesn't lose the analysis
+    // or cause duplicate OpenAI calls on retry.
+    try {
         await postPullRequestComment(
             repoData.owner.login,
             repoData.name,
@@ -186,7 +202,14 @@ export const handleWebhook = (req: Request, res: Response) => {
             `### AI Review\n\n${analysis}`,
             installationId
         );
+    } catch (err: unknown) {
+        console.error("Failed to post PR summary comment", {
+            prNumber: prDataPayload.number,
+            message: getErrorMessage(err),
+        });
+    }
 
+    try {
         const inlineComments = buildInlineComments(files, analysis);
 
         if (inlineComments.length > 0 && prData.head?.sha) {
@@ -199,27 +222,59 @@ export const handleWebhook = (req: Request, res: Response) => {
                 inlineComments
             );
         }
-    };
+    } catch (err: unknown) {
+        console.error("Failed to post inline review comments", {
+            prNumber: prDataPayload.number,
+            message: getErrorMessage(err),
+        });
+    }
+};
 
-    //handle pr action
+// Handles issue_comment webhook events for feedback processing.
+const handleIssueCommentEvent = (req: Request, res: Response) => {
+    if (!isValidIssueCommentPayload(req.body)) {
+        return res.status(422).send("Invalid issue_comment payload");
+    }
+    const icPayload = req.body;
+    if (icPayload.action === "created" && icPayload.issue.pull_request) {
+        handleFeedbackComment(icPayload).catch((err: unknown) => {
+            console.error("Feedback processing failed", {
+                commentId: icPayload.comment.id,
+                message: getErrorMessage(err),
+            });
+        });
+    }
+    return res.sendStatus(200);
+};
+
+// Handles pull_request webhook events for AI review.
+const handlePullRequestEvent = (req: Request, res: Response) => {
+    if (!isValidPRPayload(req.body)) {
+        return res.status(422).send("Invalid pull_request payload");
+    }
+    const payload = req.body;
+    const { action, pull_request: pr, repository: repo } = payload;
+    console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
+
     if (action === "opened" || action === "synchronize") {
-        const installationId = payload.installation?.id;
+        const installationId = validateInstallationId(payload.installation);
         if (!installationId) {
-            console.error("Missing installation.id in webhook payload", {
+            console.error("Missing or invalid installation.id in webhook payload", {
                 action: payload.action,
                 repo: payload.repository?.full_name,
                 prNumber: payload.pull_request?.number,
+                installationId: payload.installation?.id,
             });
-            return res.status(400).send("Missing installation.id");
+            return res.status(400).send("Missing or invalid installation.id");
         }
 
         retryWithBackoff(
-            () => processPRData(pr, repo, installationId),
+            () => analyzeAndCommentOnPR(pr, repo, installationId),
             3,
             1000,
             `PR #${pr.number} analysis`
         ).catch((err: unknown) => {
-            console.error("processPRData failed after all retries", {
+            console.error("analyzeAndCommentOnPR failed after all retries", {
                 prNumber: pr.number,
                 repo: repo.full_name,
                 action,
@@ -229,7 +284,25 @@ export const handleWebhook = (req: Request, res: Response) => {
         });
     }
 
-    res.sendStatus(200);
+    return res.sendStatus(200);
+};
+
+// Webhook entry point — verifies signature and routes to event-specific handlers.
+export const handleWebhook = (req: Request, res: Response) => {
+    if (!verifyWebhookSignature(req)) {
+        return res.status(401).send("Unauthorized");
+    }
+
+    const event = req.headers["x-github-event"] as string;
+
+    switch (event) {
+        case "issue_comment":
+            return handleIssueCommentEvent(req, res);
+        case "pull_request":
+            return handlePullRequestEvent(req, res);
+        default:
+            return res.status(200).send("Event ignored");
+    }
 };
 
 /*
@@ -240,9 +313,9 @@ const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void
     const parsed = parseFeedbackCommand(payload.comment.body);
     if (!parsed) return; // not a feedback command
 
-    const installationId = payload.installation?.id;
+    const installationId = validateInstallationId(payload.installation);
     if (!installationId) {
-        console.warn("Feedback comment missing installation.id — skipping");
+        console.warn("Feedback comment missing or invalid installation.id — skipping", { installationId: payload.installation?.id });
         return;
     }
 

@@ -137,9 +137,27 @@ const generateJWT = () => {
   const privateKey = rawKey.includes("\\n") ? rawKey.replace(/\\n/g, "\n") : rawKey;
 
   const normalized = privateKey.trim();
-  const isValidPem = normalized.startsWith("-----BEGIN PRIVATE KEY-----") || normalized.startsWith("-----BEGIN RSA PRIVATE KEY-----");
-  if (!isValidPem) {
-    throw new Error("GITHUB_PRIVATE_KEY must be a PEM formatted private key starting with -----BEGIN PRIVATE KEY----- or -----BEGIN RSA PRIVATE KEY-----");
+
+  // Validate PEM envelope: must have matching BEGIN/END markers with base64 content between them.
+  const pemMatch = normalized.match(
+    /^(-----BEGIN (RSA )?PRIVATE KEY-----)\n([\s\S]+?)\n(-----END \2PRIVATE KEY-----)$/
+  );
+  if (!pemMatch) {
+    throw new Error(
+      "GITHUB_PRIVATE_KEY must be a valid PEM private key with matching " +
+      "-----BEGIN PRIVATE KEY----- / -----END PRIVATE KEY----- (or RSA PRIVATE KEY) markers"
+    );
+  }
+
+  // Verify the body between markers is valid base64 (allows whitespace/newlines).
+  const pemBody = pemMatch[3].replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]+=*$/.test(pemBody) || pemBody.length < 100) {
+    throw new Error("GITHUB_PRIVATE_KEY has an invalid or truncated base64 body");
+  }
+
+  const appId = Number(process.env.GITHUB_APP_ID);
+  if (!Number.isInteger(appId) || appId <= 0) {
+    throw new Error("GITHUB_APP_ID must be a positive integer");
   }
 
   if (cachedJWT && Date.now() < cachedJWT.expiresAt) {
@@ -150,7 +168,7 @@ const generateJWT = () => {
     {
       iat: Math.floor(Date.now() / 1000) - 60,
       exp: Math.floor(Date.now() / 1000) + 600,
-      iss: Number(process.env.GITHUB_APP_ID),
+      iss: appId,
     },
     privateKey,
     { algorithm: "RS256" }
@@ -163,8 +181,8 @@ const generateJWT = () => {
 
 // Retrieves and caches a GitHub installation access token.
 const getInstallationToken = async (installationId: number) => {
-  if (!installationId || Number.isNaN(installationId)) {
-    throw new Error("Invalid installationId: " + installationId);
+  if (typeof installationId !== 'number' || !Number.isInteger(installationId) || installationId <= 0) {
+    throw new Error(`Invalid installationId: expected a positive integer, got ${String(installationId)}`);
   }
 
   const cached = installationTokenCache.get(installationId);
@@ -190,12 +208,28 @@ const getInstallationToken = async (installationId: number) => {
     );
 
     const token = response.data.token;
+    if (typeof token !== 'string' || token.length === 0) {
+      throw new Error(`GitHub returned an empty or missing token for installation ${installationId}`);
+    }
+
     // Cache for 55 minutes (3,300,000 ms); GitHub tokens expire after 60 minutes
     installationTokenCache.set(installationId, { token, expiresAt: Date.now() + 3_300_000 });
     return token;
   } catch (err: unknown) {
     const { status, data } = getAxiosErrorDetails(err);
+
+    // 404 = installation not found; evict any stale cache entry.
+    if (status === 404) {
+      installationTokenCache.delete(installationId);
+      console.error("Installation not found — the app may have been uninstalled or the ID is invalid", {
+        installationId,
+        status,
+      });
+      throw new Error(`GitHub installation ${installationId} not found (404). Verify the app is still installed.`);
+    }
+
     console.error("Failed to get installation token", {
+      installationId,
       status,
       data,
     });
@@ -210,9 +244,7 @@ export const fetchPRDetails = async (
   prNumber: number,
   installationId: number
 ): Promise<FetchPRDetailsResult> => {
-  let token: string;
-  token = await getInstallationToken(installationId);
-
+  const token = await getInstallationToken(installationId);
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -265,11 +297,32 @@ export const fetchPRDetails = async (
     }
   }
 
-  const files = filesResponse.data;
+  // Validate PR response contains the expected head SHA.
+  const prData = prResponse.data;
+  if (!prData || typeof prData !== 'object' || !prData.head || typeof prData.head.sha !== 'string') {
+    throw new Error(`GitHub PR response missing head.sha for ${owner}/${repo}#${prNumber}`);
+  }
+
+  // Validate files response is an array.
+  const filesData = filesResponse.data;
+  if (!Array.isArray(filesData)) {
+    throw new Error(`GitHub files response is not an array for ${owner}/${repo}#${prNumber}`);
+  }
+
+  // Filter out malformed file entries that lack required fields.
+  const validFiles = filesData.filter(
+    (f): f is GitHubChangedFile =>
+      f != null &&
+      typeof f.filename === 'string' && f.filename.length > 0 &&
+      typeof f.status === 'string' && f.status.length > 0
+  );
+
+  // Validate reviews response is an array (non-critical — default to empty).
+  const reviewsData = Array.isArray(reviewsResponse.data) ? reviewsResponse.data as unknown[] : [];
 
   // Fetches content for changed files; individual file failures do not stop processing.
   const fileContents = await Promise.all(
-    files
+    validFiles
       .filter((f) => f.status !== "removed")
       .map(async (f) => {
         if (!f.raw_url) return { ...f, content: null };
@@ -278,7 +331,8 @@ export const fetchPRDetails = async (
             () => axios.get<string>(f.raw_url!, { headers }),
             `fetchFileContent:${owner}/${repo}:${f.filename}`
           );
-          return { ...f, content: r.data };
+          const content = typeof r.data === 'string' ? r.data : null;
+          return { ...f, content };
         } catch (err: unknown) {
           const details = getAxiosErrorDetails(err);
           console.error(`Failed to fetch content for file ${f.filename}`, {
@@ -291,15 +345,30 @@ export const fetchPRDetails = async (
   );
 
   return {
-    prData: prResponse.data as GitHubPRData,
+    prData: prData as GitHubPRData,
     files: fileContents,
-    reviews: reviewsResponse.data as unknown[],
+    reviews: reviewsData,
   };
 };
 
 // GitHub enforces a 65,536 character limit on issue comments
 const GITHUB_COMMENT_MAX_LENGTH = 65_536;
 const TRUNCATION_NOTICE = "\n\n---\n> ⚠️ *Review truncated — exceeded GitHub's comment length limit.*";
+const HARD_FALLBACK_LENGTH = 10_000;
+
+// Truncates a comment body to fit within a character budget, breaking at the
+// last newline before the limit to avoid corrupting markdown formatting.
+const truncateAtLineBoundary = (body: string, maxContentLength: number): string => {
+  if (body.length <= maxContentLength) return body;
+
+  const slice = body.slice(0, maxContentLength);
+  const lastNewline = slice.lastIndexOf('\n');
+
+  // Prefer breaking at a line boundary; fall back to hard cut if no newline found.
+  const safeSlice = lastNewline > maxContentLength * 0.5 ? slice.slice(0, lastNewline) : slice;
+
+  return safeSlice + TRUNCATION_NOTICE;
+};
 
 // Posts a standard PR issue comment.
 const postComment = async (token: string, owner: string, repo: string, prNumber: number, body: string) => {
@@ -328,10 +397,17 @@ export const postPullRequestComment = async (
 ) => {
   const token = await getInstallationToken(installationId);
 
-  // Truncate proactively if body exceeds GitHub's limit
-  const safeBody = body.length > GITHUB_COMMENT_MAX_LENGTH
-    ? body.slice(0, GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE
-    : body;
+  const maxContentLength = GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length;
+  const safeBody = truncateAtLineBoundary(body, maxContentLength);
+
+  if (safeBody.length < body.length) {
+    console.warn("PR comment truncated to fit GitHub limit", {
+      owner, repo, prNumber,
+      originalLength: body.length,
+      truncatedLength: safeBody.length,
+      charsDropped: body.length - safeBody.length,
+    });
+  }
 
   try {
     await postComment(token, owner, repo, prNumber, safeBody);
@@ -340,10 +416,12 @@ export const postPullRequestComment = async (
     const { status, data } = getAxiosErrorDetails(err);
     // 422 can still occur for other validation reasons — retry with a hard-truncated fallback
     if (status === 422) {
+      const fallbackBody = truncateAtLineBoundary(body, HARD_FALLBACK_LENGTH);
       console.warn("GitHub rejected comment with 422 — retrying with hard-truncated body", {
-        owner, repo, prNumber, originalLength: body.length,
+        owner, repo, prNumber,
+        originalLength: body.length,
+        fallbackLength: fallbackBody.length,
       });
-      const fallbackBody = body.slice(0, 10_000) + TRUNCATION_NOTICE;
       try {
         await postComment(token, owner, repo, prNumber, fallbackBody);
         console.log("Comment posted successfully (truncated fallback)");
