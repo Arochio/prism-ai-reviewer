@@ -11,6 +11,8 @@ export interface OpenAIConfig {
   bypassLargeFiles: boolean; // skip files exceeding size limit
   enableCache: boolean; // caches OpenAI responses for identical file sets
   textPromptPrefix: string;
+  enableEmbeddings: boolean; // enables embedding generation
+  vectorDbTopK: number; // top K vectors to return from vector DB
 }
 
 const defaultConfig: OpenAIConfig = {
@@ -27,6 +29,8 @@ const defaultConfig: OpenAIConfig = {
   enableCache: true,
   textPromptPrefix:
     "You are an expert code reviewer. Analyze the changed file content and give concise, actionable bullet points (security, style, correctness).",
+  enableEmbeddings: false,
+  vectorDbTopK: 5,
 };
 
 const envConfig: Partial<OpenAIConfig> = {
@@ -54,6 +58,12 @@ const envConfig: Partial<OpenAIConfig> = {
     ? process.env.OPENAI_ENABLE_CACHE.toLowerCase() === "true"
     : undefined,
   textPromptPrefix: process.env.OPENAI_PROMPT_PREFIX,
+  enableEmbeddings: process.env.OPENAI_ENABLE_EMBEDDINGS
+    ? process.env.OPENAI_ENABLE_EMBEDDINGS.toLowerCase() === "true"
+    : undefined,
+  vectorDbTopK: process.env.OPENAI_VECTOR_DB_TOP_K
+    ? Number(process.env.OPENAI_VECTOR_DB_TOP_K)
+    : undefined,
 };
 
 export const openAIConfig = {

@@ -31,7 +31,7 @@ export const handleWebhook = (req: Request, res: Response) => {
 
         console.log(`Fetched ${files.length} files for PR #${pr.number}`);
 
-        const analysis = await analyzeFiles(files);
+        const analysis = await analyzeFiles(files, pr.number);
 
         console.log("AI Review for PR:", analysis);
 

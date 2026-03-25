@@ -1,9 +1,10 @@
-import express from "express";
 import dotenv from "dotenv";
+dotenv.config();
+console.log("Env loaded:", { OPENAI_API_KEY: process.env.OPENAI_API_KEY ? "set" : "not set" });
+
+import express from "express";
 import { handleWebhook } from "./controllers/webhookController";
 import { openAIConfig } from "./config/openai.config";
-
-dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
