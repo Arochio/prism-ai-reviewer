@@ -16,6 +16,9 @@ This project is built by a software engineering student exploring AI tools. It i
 - Configurable OpenAI settings (model, tokens, caching, file limits)
 - Bypasses large files to avoid token limits
 - Caches OpenAI responses for identical file sets
+- Generates OpenAI embeddings for each changed file
+- Stores embeddings in Pinecone vector database per PR and file
+- Queries for similar files from previous PRs and includes them in the AI prompt for richer, context-aware reviews
 
 ## Prerequisites
 
@@ -23,6 +26,7 @@ This project is built by a software engineering student exploring AI tools. It i
 - npm
 - A GitHub App with private key
 - OpenAI API key
+- Pinecone account and API key (for vector database)
 - ngrok or similar tool for webhook tunneling
 
 ## Installation
@@ -45,6 +49,9 @@ This project is built by a software engineering student exploring AI tools. It i
    GITHUB_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n...your_private_key...\n-----END RSA PRIVATE KEY-----
    GITHUB_WEBHOOK_SECRET=your_webhook_secret
    OPENAI_API_KEY=your_openai_api_key
+   # Pinecone vector database
+   PINECONE_API_KEY=your_pinecone_api_key
+   PINECONE_INDEX_NAME=your_pinecone_index_name
    # Optional OpenAI configs (defaults provided)
    OPENAI_MODEL=gpt-4o-mini
    OPENAI_MAX_TOKENS=1200
@@ -54,7 +61,12 @@ This project is built by a software engineering student exploring AI tools. It i
    OPENAI_FILE_CONTENT_SIZE_LIMIT=16000
    OPENAI_TOTAL_FILES_LIMIT=8
    OPENAI_PROMPT_PREFIX="You are an expert code reviewer..."
+   OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+   OPENAI_ENABLE_EMBEDDINGS=true
+   OPENAI_VECTOR_DB_TOP_K=5
    ```
+
+> **Pinecone setup**: Create a Pinecone index with **dimension 1536** and metric **cosine** (required for `text-embedding-3-small`). Any other dimension will cause a `PineconeBadRequestError` at runtime.
 
 ## Usage
 
@@ -84,6 +96,7 @@ This project is built by a software engineering student exploring AI tools. It i
 - **Environment Variables**: Ensure `.env` is not committed (it's already in `.gitignore`).
 - **Webhook Verification**: The app verifies webhook signatures for security.
 - **OpenAI Configuration**: Customize AI behavior via env vars (e.g., model selection, token limits, caching). Defaults are optimized for cost and performance.
+- **Embeddings & Vector DB**: Set `OPENAI_ENABLE_EMBEDDINGS=true` to enable embedding generation and Pinecone storage. Each analyzed file's embedding is stored under the key `pr-{prNumber}-{filename}`. On subsequent PRs, similar files from past PRs are retrieved and included in the AI prompt. The `OPENAI_VECTOR_DB_TOP_K` variable controls how many similar results are returned (default: 5).
 
 ## Development
 
