@@ -504,19 +504,34 @@ export const fetchCommentBody = async (
 ): Promise<string | null> => {
   try {
     const token = await getInstallationToken(installationId);
-    const response = await withGitHubRateLimitRetry(
-      () => axios.get<{ body?: string }>(
-        `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-          },
+    const endpoints = [
+      `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+      `https://api.github.com/repos/${owner}/${repo}/pulls/comments/${commentId}`,
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await withGitHubRateLimitRetry(
+          () => axios.get<{ body?: string }>(
+            endpoint,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+              },
+            }
+          ),
+          `fetchCommentBody:${owner}/${repo}:${commentId}`
+        );
+        if (typeof response.data.body === "string") {
+          return response.data.body;
         }
-      ),
-      `fetchCommentBody:${owner}/${repo}:${commentId}`
-    );
-    return response.data.body ?? null;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
   } catch (err: unknown) {
     const { status, message } = getAxiosErrorDetails(err);
     console.error("Failed to fetch comment body", { owner, repo, commentId, status, message });

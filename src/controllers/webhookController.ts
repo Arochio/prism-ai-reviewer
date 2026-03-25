@@ -47,6 +47,21 @@ interface IssueCommentPayload {
     installation?: { id?: number };
 }
 
+interface PullRequestReviewCommentPayload {
+    action: string;
+    comment: {
+        id: number;
+        body: string;
+        user: { login: string };
+        in_reply_to_id?: number;
+    };
+    pull_request: {
+        number: number;
+    };
+    repository: WebhookRepository;
+    installation?: { id?: number };
+}
+
 const getErrorMessage = (error: unknown): string => {
     if (error instanceof Error) return error.message;
     return "Unknown error";
@@ -84,6 +99,25 @@ const isValidIssueCommentPayload = (body: unknown): body is IssueCommentPayload 
 
     const issue = b.issue as Record<string, unknown> | undefined;
     if (!issue || typeof issue.number !== 'number') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidPRReviewCommentPayload = (body: unknown): body is PullRequestReviewCommentPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const comment = b.comment as Record<string, unknown> | undefined;
+    if (!comment || typeof comment.id !== 'number' || typeof comment.body !== 'string') return false;
+    if (!comment.user || typeof (comment.user as Record<string, unknown>).login !== 'string') return false;
+
+    const pullRequest = b.pull_request as Record<string, unknown> | undefined;
+    if (!pullRequest || typeof pullRequest.number !== 'number') return false;
 
     const repo = b.repository as Record<string, unknown> | undefined;
     if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
@@ -276,6 +310,23 @@ const handleIssueCommentEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
+// Handles pull_request_review_comment webhook events for feedback processing.
+const handlePullRequestReviewCommentEvent = (req: Request, res: Response) => {
+    if (!isValidPRReviewCommentPayload(req.body)) {
+        return res.status(422).send("Invalid pull_request_review_comment payload");
+    }
+    const reviewPayload = req.body;
+    if (reviewPayload.action === "created") {
+        handleReviewFeedbackComment(reviewPayload).catch((err: unknown) => {
+            console.error("Review feedback processing failed", {
+                commentId: reviewPayload.comment.id,
+                message: getErrorMessage(err),
+            });
+        });
+    }
+    return res.sendStatus(200);
+};
+
 // Handles pull_request webhook events for AI review.
 const handlePullRequestEvent = (req: Request, res: Response) => {
     if (!isValidPRPayload(req.body)) {
@@ -327,6 +378,8 @@ export const handleWebhook = (req: Request, res: Response) => {
     switch (event) {
         case "issue_comment":
             return handleIssueCommentEvent(req, res);
+        case "pull_request_review_comment":
+            return handlePullRequestReviewCommentEvent(req, res);
         case "pull_request":
             return handlePullRequestEvent(req, res);
         default:
@@ -338,23 +391,40 @@ export const handleWebhook = (req: Request, res: Response) => {
  * Processes a feedback command left as a PR comment reply.
  * Parses the command, fetches the parent AI review comment, and stores the feedback.
  */
-const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void> => {
-    const parsed = parseFeedbackCommand(payload.comment.body);
+interface FeedbackCommandContext {
+    commentId: number;
+    commentBody: string;
+    inReplyToId?: number;
+    prNumber: number;
+    owner: string;
+    repo: string;
+    repoFullName: string;
+    installation?: { id?: unknown };
+}
+
+const processFeedbackCommand = async (context: FeedbackCommandContext): Promise<void> => {
+    const parsed = parseFeedbackCommand(context.commentBody);
     if (!parsed) return; // not a feedback command
 
-    const installationId = validateInstallationId(payload.installation);
+    console.log("Feedback command detected", {
+        commentId: context.commentId,
+        prNumber: context.prNumber,
+        sentiment: parsed.sentiment,
+    });
+
+    const installationId = validateInstallationId(context.installation);
     if (!installationId) {
-        console.warn("Feedback comment missing or invalid installation.id — skipping", { installationId: payload.installation?.id });
+        console.warn("Feedback comment missing or invalid installation.id — skipping", { installationId: context.installation?.id });
         return;
     }
 
     // Resolve the AI review text this feedback refers to.
     let aiReviewSnippet = '';
-    const parentId = payload.comment.in_reply_to_id;
+    const parentId = context.inReplyToId;
     if (parentId) {
         const parentBody = await fetchCommentBody(
-            payload.repository.owner.login,
-            payload.repository.name,
+            context.owner,
+            context.repo,
             parentId,
             installationId
         );
@@ -363,28 +433,54 @@ const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void
         } else {
             console.warn("Could not fetch parent comment body for feedback context", {
                 parentId,
-                prNumber: payload.issue.number,
+                prNumber: context.prNumber,
             });
         }
     } else {
         console.warn("Feedback comment is not a reply — no AI review context available", {
-            commentId: payload.comment.id,
-            prNumber: payload.issue.number,
+            commentId: context.commentId,
+            prNumber: context.prNumber,
         });
     }
 
     await storeFeedback({
-        commentId: payload.comment.id,
-        prNumber: payload.issue.number,
-        repo: payload.repository.full_name,
+        commentId: context.commentId,
+        prNumber: context.prNumber,
+        repo: context.repoFullName,
         sentiment: parsed.sentiment,
         userFeedback: parsed.explanation || `(${parsed.sentiment})`,
         aiReviewSnippet: aiReviewSnippet.slice(0, 2000),
     });
 
     console.log('Feedback recorded', {
-        prNumber: payload.issue.number,
+        prNumber: context.prNumber,
         sentiment: parsed.sentiment,
+        commentId: context.commentId,
+    });
+};
+
+const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void> => {
+    await processFeedbackCommand({
         commentId: payload.comment.id,
+        commentBody: payload.comment.body,
+        inReplyToId: payload.comment.in_reply_to_id,
+        prNumber: payload.issue.number,
+        owner: payload.repository.owner.login,
+        repo: payload.repository.name,
+        repoFullName: payload.repository.full_name,
+        installation: payload.installation,
+    });
+};
+
+const handleReviewFeedbackComment = async (payload: PullRequestReviewCommentPayload): Promise<void> => {
+    await processFeedbackCommand({
+        commentId: payload.comment.id,
+        commentBody: payload.comment.body,
+        inReplyToId: payload.comment.in_reply_to_id,
+        prNumber: payload.pull_request.number,
+        owner: payload.repository.owner.login,
+        repo: payload.repository.name,
+        repoFullName: payload.repository.full_name,
+        installation: payload.installation,
     });
 };
