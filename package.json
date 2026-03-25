@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn src/index.ts",
+    "ingest": "ts-node src/scripts/ingestRepo.ts",
     "lint": "eslint src/"
   },
   "repository": {

@@ -1,19 +1,14 @@
 import axios from "axios";
 import { openAIConfig } from "../config/openai.config";
-import { createEmbedding, storeEmbedding, querySimilar } from './vectorService';
+import { storeEmbedding } from './vectorService';
 import { getCachedOpenAIResponse, setCachedOpenAIResponse } from "./cacheService";
-
-interface AnalyzableFile {
-  filename: string;
-  status: string;
-  content?: string | null;
-}
-
-interface ProcessedFile extends AnalyzableFile {
-  content: string;
-  embedding: number[] | null;
-  similarText: string;
-}
+import { extractDiff, type AnalyzableFile, type ProcessedFile } from '../pipeline/extractDiff';
+import { retrieveContext } from '../pipeline/retrieveContext';
+import { runBugPass } from '../pipeline/analyze/bugPass';
+import { runDesignPass } from '../pipeline/analyze/designPass';
+import { runPerformancePass } from '../pipeline/analyze/performancePass';
+import { rankFindings } from '../pipeline/rankFindings';
+import { generateSummary } from '../pipeline/generateSummary';
 
 // Converts unknown errors into a stable log message.
 const getErrorMessage = (error: unknown): string => {
@@ -22,9 +17,9 @@ const getErrorMessage = (error: unknown): string => {
 };
 
 // Builds a deterministic cache key from model settings and truncated file content.
-const buildCacheKey = (files: AnalyzableFile[]) => {
+const buildCacheKey = (files: ProcessedFile[]): string => {
   const fileKey = files
-    .map((file) => `${file.filename}:${(file.content || "").slice(0, 128)}`)
+    .map((file) => `${file.filename}:${file.content.slice(0, 128)}`)
     .join("|");
   return [
     openAIConfig.model,
@@ -36,80 +31,18 @@ const buildCacheKey = (files: AnalyzableFile[]) => {
   ].join("::");
 };
 
-// get file analysis for GitHub PR comment
-export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number) => {
-  // Limits file volume before analysis to control token and runtime usage.
-  const limitedFiles = files.slice(0, openAIConfig.totalFilesLimit);
-
-  const processedFiles: ProcessedFile[] = await Promise.all(
-    limitedFiles
-      .filter((f) => f.status !== "removed")
-      .filter((f) => {
-        const contentLength = (f.content || "").length;
-        if (!openAIConfig.bypassLargeFiles) return true;
-        return contentLength <= openAIConfig.fileContentSizeLimit;
-      })
-      .map(async (f) => {
-        const content = (f.content || "").slice(0, openAIConfig.fileContentSizeLimit) +
-          ((f.content || "").length > openAIConfig.fileContentSizeLimit
-            ? "\n\n...truncated..."
-            : "");
-
-        // Embedding and similarity are best-effort — failures do not block analysis
-        let embedding: number[] | null = null;
-        let similarText = '';
-        try {
-          embedding = await createEmbedding(content);
-          const similar = await querySimilar(embedding, openAIConfig.vectorDbTopK);
-          if (similar.length > 0) {
-            similarText = `\n\nSimilar files in codebase: ${similar.map((s) => String(s.metadata?.["filename"] || "unknown")).join(', ')}`;
-          }
-        } catch (err: unknown) {
-          console.error(`Embedding/similarity skipped for ${f.filename}`, { message: getErrorMessage(err) });
-        }
-
-        return {
-          ...f,
-          content,
-          embedding,
-          similarText,
-        };
-      })
-  );
-
-  if (processedFiles.length === 0) {
-    return "No files to analyze (bypassed due to large size or removed files).";
-  }
-
-  const cacheKey = buildCacheKey(processedFiles);
-  if (openAIConfig.enableCache) {
-    // Returns early on cache hit to avoid duplicate OpenAI requests.
-    const cached = await getCachedOpenAIResponse(cacheKey);
-    if (cached) {
-      return cached;
-    }
-  }
-
-  // Constructs the user payload from normalized file snapshots.
-  const prompt = [
-    { role: "system", content: openAIConfig.textPromptPrefix },
-    {
-      role: "user",
-      content: processedFiles
-        .map(
-          (f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}${f.similarText}`
-        )
-        .join("\n\n"),
-    },
-  ];
-
+// Sends a single chat completion request to the OpenAI API using shared config.
+export const callOpenAI = async (systemPrompt: string, userContent: string): Promise<string> => {
   let response;
   try {
     response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
         model: openAIConfig.model,
-        messages: prompt,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
         max_tokens: openAIConfig.maxTokens,
         temperature: openAIConfig.temperature,
         top_p: openAIConfig.topP,
@@ -141,17 +74,57 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number) =>
     throw new Error("OpenAI returned no content in response");
   }
 
-  if (openAIConfig.enableCache) {
-    // Persists successful responses for subsequent identical requests.
-    await setCachedOpenAIResponse(cacheKey, result);
+  return result;
+};
+
+// Orchestrates the multi-pass analysis pipeline and returns a formatted PR review comment.
+export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number): Promise<string> => {
+  const processedFiles = extractDiff(files);
+
+  if (processedFiles.length === 0) {
+    return "No files to analyze (bypassed due to large size or removed files).";
   }
 
-  // Stores embeddings after analysis; failures are non-blocking in vector service.
-  for (const file of processedFiles) {
-    if (file.embedding) {
-      await storeEmbedding(`pr-${prNumber}-${file.filename}`, file.embedding, { prNumber, filename: file.filename });
+  const cacheKey = buildCacheKey(processedFiles);
+  if (openAIConfig.enableCache) {
+    // Returns early on cache hit to avoid duplicate OpenAI requests.
+    const cached = await getCachedOpenAIResponse(cacheKey);
+    if (cached) {
+      return cached;
     }
   }
 
-  return result;
+  // Enriches files with vector similarity context before analysis passes.
+  const enrichedFiles = openAIConfig.enableEmbeddings
+    ? await retrieveContext(processedFiles)
+    : processedFiles;
+
+  // Runs all three analysis passes in parallel to reduce total latency.
+  const [bugRaw, designRaw, performanceRaw] = await Promise.all([
+    runBugPass(enrichedFiles, callOpenAI),
+    runDesignPass(enrichedFiles, callOpenAI),
+    runPerformancePass(enrichedFiles, callOpenAI),
+  ]);
+
+  const ranked = rankFindings(bugRaw, designRaw, performanceRaw);
+  const summary = generateSummary(ranked);
+
+  if (openAIConfig.enableCache) {
+    // Persists successful responses for subsequent identical requests.
+    await setCachedOpenAIResponse(cacheKey, summary);
+  }
+
+  // Stores embeddings with truncated content for RAG retrieval on future PRs.
+  // Content is capped at 2000 chars to stay within Pinecone's 40KB metadata limit.
+  for (const file of enrichedFiles) {
+    if (file.embedding) {
+      await storeEmbedding(`pr-${prNumber}-${file.filename}`, file.embedding, {
+        prNumber,
+        filename: file.filename,
+        content: file.content.slice(0, 2000),
+      });
+    }
+  }
+
+  return summary;
 };
