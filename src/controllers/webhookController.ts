@@ -100,17 +100,23 @@ const getFirstAddedLineFromPatch = (patch?: string): number | null => {
     if (!patch) return null;
 
     let currentNewLine = 0;
+    let insideHunk = false;
     const lines = patch.split("\n");
 
     for (const line of lines) {
         const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
         if (hunkMatch) {
-            currentNewLine = Number(hunkMatch[1]);
+            const parsed = Number(hunkMatch[1]);
+            if (!Number.isInteger(parsed) || parsed < 0) continue;
+            currentNewLine = parsed;
+            insideHunk = true;
             continue;
         }
 
+        if (!insideHunk) continue;
+
         if (line.startsWith("+") && !line.startsWith("+++")) {
-            return currentNewLine;
+            return currentNewLine > 0 ? currentNewLine : null;
         }
 
         if (!line.startsWith("-")) {
@@ -167,18 +173,30 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
 // Validates the webhook signature against the configured secret.
 const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
-    if (!secret) return true;
+    if (!secret) {
+        console.warn("GITHUB_WEBHOOK_SECRET is not set — webhook signature verification is disabled");
+        return false;
+    }
 
-    const signature = req.headers["x-hub-signature-256"] as string;
+    const signature = req.headers["x-hub-signature-256"];
+    if (typeof signature !== 'string' || !signature.startsWith("sha256=")) {
+        return false;
+    }
+
     const hmac = crypto.createHmac("sha256", secret);
     const digest = "sha256=" + hmac.update(JSON.stringify(req.body)).digest("hex");
-    return signature === digest;
+
+    try {
+        return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
+    } catch {
+        return false;
+    }
 };
 
 // Returns a validated positive integer installation ID, or null if invalid.
-const validateInstallationId = (installation?: { id?: number }): number | null => {
+const validateInstallationId = (installation?: { id?: unknown }): number | null => {
     const id = installation?.id;
-    if (!id || typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return null;
+    if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0 || id > Number.MAX_SAFE_INTEGER) return null;
     return id;
 };
 
@@ -188,7 +206,18 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
 
     console.log(`Fetched ${files.length} files for PR #${prDataPayload.number}`);
 
-    const analysis = await analyzeFiles(files, prDataPayload.number);
+    let analysis: string;
+    try {
+        analysis = await analyzeFiles(files, prDataPayload.number);
+    } catch (err: unknown) {
+        console.error("AI analysis failed — skipping comment posting", {
+            prNumber: prDataPayload.number,
+            repo: repoData.full_name,
+            message: getErrorMessage(err),
+            stack: getErrorStack(err),
+        });
+        throw err;
+    }
 
     console.log("AI Review for PR:", analysis);
 
@@ -329,7 +358,19 @@ const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void
             parentId,
             installationId
         );
-        aiReviewSnippet = parentBody || '';
+        if (parentBody) {
+            aiReviewSnippet = parentBody;
+        } else {
+            console.warn("Could not fetch parent comment body for feedback context", {
+                parentId,
+                prNumber: payload.issue.number,
+            });
+        }
+    } else {
+        console.warn("Feedback comment is not a reply — no AI review context available", {
+            commentId: payload.comment.id,
+            prNumber: payload.issue.number,
+        });
     }
 
     await storeFeedback({
