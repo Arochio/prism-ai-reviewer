@@ -4,6 +4,41 @@ import { fetchPRDetails, postPullRequestComment } from "../services/githubServic
 import { analyzeFiles } from "../services/openaiService";
 import { retryWithBackoff } from "../utils/retry";
 
+interface WebhookPullRequest {
+    number: number;
+    title: string;
+    user: {
+        login: string;
+    };
+}
+
+interface WebhookRepository {
+    name: string;
+    full_name: string;
+    owner: {
+        login: string;
+    };
+}
+
+interface WebhookPayload {
+    action: string;
+    pull_request: WebhookPullRequest;
+    repository: WebhookRepository;
+    installation?: {
+        id?: number;
+    };
+}
+
+const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error) return error.message;
+    return "Unknown error";
+};
+
+const getErrorStack = (error: unknown): string | undefined => {
+    if (error instanceof Error) return error.stack;
+    return undefined;
+};
+
 //webhook handling
 export const handleWebhook = (req: Request, res: Response) => {
     const signature = req.headers["x-hub-signature-256"] as string;
@@ -24,23 +59,24 @@ export const handleWebhook = (req: Request, res: Response) => {
         return res.status(200).send("Event ignored");
     }
 
-    const { action, pull_request: pr, repository: repo } = req.body;
+    const payload = req.body as WebhookPayload;
+    const { action, pull_request: pr, repository: repo } = payload;
     console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
 
-    const processPRData = async (pr: any, repo: any, installationId: number) => {
-        const { prData, files, reviews } = await fetchPRDetails(repo.owner.login, repo.name, pr.number, installationId);
+    const processPRData = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
+        const { files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
 
-        console.log(`Fetched ${files.length} files for PR #${pr.number}`);
+        console.log(`Fetched ${files.length} files for PR #${prDataPayload.number}`);
 
-        const analysis = await analyzeFiles(files, pr.number);
+        const analysis = await analyzeFiles(files, prDataPayload.number);
 
         console.log("AI Review for PR:", analysis);
 
         // optionally post back as a comment to PR:
         await postPullRequestComment(
-            repo.owner.login,
-            repo.name,
-            pr.number,
+            repoData.owner.login,
+            repoData.name,
+            prDataPayload.number,
             `### AI Review\n\n${analysis}`,
             installationId
         );
@@ -48,9 +84,9 @@ export const handleWebhook = (req: Request, res: Response) => {
 
     //handle pr action
     if (action === "opened" || action === "synchronize") {
-        const installationId = req.body.installation?.id;
+        const installationId = payload.installation?.id;
         if (!installationId) {
-            console.error("Missing installation.id in webhook payload", { body: req.body });
+            console.error("Missing installation.id in webhook payload", { body: payload });
             return res.status(400).send("Missing installation.id");
         }
 
@@ -59,13 +95,13 @@ export const handleWebhook = (req: Request, res: Response) => {
             3,
             1000,
             `PR #${pr.number} analysis`
-        ).catch((err) => {
+        ).catch((err: unknown) => {
             console.error("processPRData failed after all retries", {
                 prNumber: pr.number,
                 repo: repo.full_name,
                 action,
-                message: err.message,
-                stack: err.stack,
+                message: getErrorMessage(err),
+                stack: getErrorStack(err),
             });
         });
     }

@@ -1,5 +1,31 @@
 import axios from "axios";
 import jwt from "jsonwebtoken";
+import type { AxiosResponse } from "axios";
+
+interface GitHubApiErrorResponse {
+  message?: string;
+}
+
+interface GitHubChangedFile {
+  filename: string;
+  status: string;
+  raw_url?: string;
+  content?: string | null;
+}
+
+const getAxiosErrorDetails = (error: unknown): { status?: number; data?: unknown; message: string } => {
+  if (axios.isAxiosError<GitHubApiErrorResponse>(error)) {
+    return {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    };
+  }
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+  return { message: "Unknown error" };
+};
 
 // JWT is valid for 10 minutes; cache it for 9 to allow a safety margin
 let cachedJWT: { token: string; expiresAt: number } | null = null;
@@ -70,11 +96,12 @@ const getInstallationToken = async (installationId: number) => {
     // Cache for 55 minutes (3,300,000 ms); GitHub tokens expire after 60 minutes
     installationTokenCache.set(installationId, { token, expiresAt: Date.now() + 3_300_000 });
     return token;
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const { status, data } = getAxiosErrorDetails(err);
     console.error("Failed to get installation token", {
       installationId,
-      status: err.response?.status,
-      data: err.response?.data,
+      status,
+      data,
     });
     throw err;
   }
@@ -89,48 +116,51 @@ export const fetchPRDetails = async (
   installationId: number
 ) => {
   let token: string;
-  try {
-    token = await getInstallationToken(installationId);
-  } catch (err) {
-    throw err; // already logged in getInstallationToken
-  }
+  token = await getInstallationToken(installationId);
+
 
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
   };
 
-  const fetchAll = (hdrs: typeof headers) => Promise.all([
+  const fetchAll = (hdrs: typeof headers): Promise<[
+    AxiosResponse,
+    AxiosResponse<GitHubChangedFile[]>,
+    AxiosResponse
+  ]> => Promise.all([
     axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: hdrs }),
-    axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`, { headers: hdrs }),
+    axios.get<GitHubChangedFile[]>(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`, { headers: hdrs }),
     axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { headers: hdrs }),
   ]);
 
   let prResponse, filesResponse, reviewsResponse;
   try {
     [prResponse, filesResponse, reviewsResponse] = await fetchAll(headers);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const { status, data } = getAxiosErrorDetails(err);
     // If the cached token was revoked (401), evict it and retry once with a fresh token
-    if (err.response?.status === 401) {
+    if (status === 401) {
       console.warn("GitHub returned 401 — evicting cached token and retrying", { installationId });
       installationTokenCache.delete(installationId);
       const freshToken = await getInstallationToken(installationId);
       const retryHeaders = { ...headers, Authorization: `Bearer ${freshToken}` };
       try {
         [prResponse, filesResponse, reviewsResponse] = await fetchAll(retryHeaders);
-      } catch (retryErr: any) {
+      } catch (retryErr: unknown) {
+        const retryDetails = getAxiosErrorDetails(retryErr);
         console.error("Failed to fetch PR data after token refresh", {
           owner, repo, prNumber,
-          status: retryErr.response?.status,
-          data: retryErr.response?.data,
+          status: retryDetails.status,
+          data: retryDetails.data,
         });
         throw retryErr;
       }
     } else {
       console.error("Failed to fetch PR data from GitHub", {
         owner, repo, prNumber,
-        status: err.response?.status,
-        data: err.response?.data,
+        status,
+        data,
       });
       throw err;
     }
@@ -141,16 +171,17 @@ export const fetchPRDetails = async (
   // Fetch content for each changed file; failures per file are caught individually
   const fileContents = await Promise.all(
     files
-      .filter((f: any) => f.status !== "removed")
-      .map(async (f: any) => {
+      .filter((f) => f.status !== "removed")
+      .map(async (f) => {
         if (!f.raw_url) return { ...f, content: null };
         try {
-          const r = await axios.get(f.raw_url, { headers });
+          const r = await axios.get<string>(f.raw_url, { headers });
           return { ...f, content: r.data };
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const details = getAxiosErrorDetails(err);
           console.error(`Failed to fetch content for file ${f.filename}`, {
-            status: err.response?.status,
-            message: err.message,
+            status: details.status,
+            message: details.message,
           });
           return { ...f, content: null };
         }
@@ -199,9 +230,10 @@ export const postPullRequestComment = async (
   try {
     await postComment(token, owner, repo, prNumber, safeBody);
     console.log("Comment posted successfully");
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const { status, data } = getAxiosErrorDetails(err);
     // 422 can still occur for other validation reasons — retry with a hard-truncated fallback
-    if (err.response?.status === 422) {
+    if (status === 422) {
       console.warn("GitHub rejected comment with 422 — retrying with hard-truncated body", {
         owner, repo, prNumber, originalLength: body.length,
       });
@@ -209,19 +241,20 @@ export const postPullRequestComment = async (
       try {
         await postComment(token, owner, repo, prNumber, fallbackBody);
         console.log("Comment posted successfully (truncated fallback)");
-      } catch (retryErr: any) {
+      } catch (retryErr: unknown) {
+        const retryDetails = getAxiosErrorDetails(retryErr);
         console.error("Failed to post truncated PR comment", {
           owner, repo, prNumber,
-          status: retryErr.response?.status,
-          data: retryErr.response?.data,
+          status: retryDetails.status,
+          data: retryDetails.data,
         });
         throw retryErr;
       }
     } else {
       console.error("Failed to post PR comment", {
         owner, repo, prNumber, installationId,
-        status: err.response?.status,
-        data: err.response?.data,
+        status,
+        data,
       });
       throw err;
     }

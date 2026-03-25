@@ -27,7 +27,8 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "openai": "^6.32.0",
-    "pinecone-client": "^2.0.0"
+    "pinecone-client": "^2.0.0",
+    "redis": "^5.11.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

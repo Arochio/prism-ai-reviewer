@@ -1,8 +1,21 @@
 // Statuses that are permanent failures — no point retrying
 const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
 
-const isRetryable = (err: any): boolean => {
-  const status: number | undefined = err?.response?.status;
+const getStatusCode = (error: unknown): number | undefined => {
+  if (typeof error === "object" && error !== null && "response" in error) {
+    const response = (error as { response?: { status?: number } }).response;
+    return response?.status;
+  }
+  return undefined;
+};
+
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  return "Unknown error";
+};
+
+const isRetryable = (err: unknown): boolean => {
+  const status = getStatusCode(err);
   if (status !== undefined && NON_RETRYABLE_STATUSES.has(status)) return false;
   return true;
 };
@@ -22,34 +35,34 @@ export const retryWithBackoff = async <T>(
   baseDelayMs = 1000,
   label = "operation"
 ): Promise<T> => {
-  let lastErr: any;
+  let lastErr: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
-    } catch (err: any) {
+    } catch (err: unknown) {
       lastErr = err;
 
       if (!isRetryable(err)) {
         console.error(`[retry] ${label} failed with non-retryable error — aborting`, {
           attempt,
-          status: err?.response?.status,
-          message: err?.message,
+          status: getStatusCode(err),
+          message: getErrorMessage(err),
         });
         throw err;
       }
 
       if (attempt === maxAttempts) {
         console.error(`[retry] ${label} failed after ${maxAttempts} attempts`, {
-          message: err?.message,
+          message: getErrorMessage(err),
         });
         break;
       }
 
       const delayMs = baseDelayMs * 2 ** (attempt - 1);
       console.warn(`[retry] ${label} attempt ${attempt} failed — retrying in ${delayMs}ms`, {
-        status: err?.response?.status,
-        message: err?.message,
+        status: getStatusCode(err),
+        message: getErrorMessage(err),
       });
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
