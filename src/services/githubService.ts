@@ -6,11 +6,31 @@ interface GitHubApiErrorResponse {
   message?: string;
 }
 
-interface GitHubChangedFile {
+interface GitHubPRData {
+  head: {
+    sha: string;
+  };
+}
+
+export interface GitHubChangedFile {
   filename: string;
   status: string;
   raw_url?: string;
+  patch?: string;
   content?: string | null;
+}
+
+export interface InlineReviewCommentInput {
+  path: string;
+  line: number;
+  body: string;
+  side?: "RIGHT" | "LEFT";
+}
+
+interface FetchPRDetailsResult {
+  prData: GitHubPRData;
+  files: GitHubChangedFile[];
+  reviews: unknown[];
 }
 
 const getAxiosErrorDetails = (error: unknown): { status?: number; data?: unknown; message: string; headers?: Record<string, unknown> } => {
@@ -185,7 +205,7 @@ export const fetchPRDetails = async (
   repo: string,
   prNumber: number,
   installationId: number
-) => {
+): Promise<FetchPRDetailsResult> => {
   let token: string;
   token = await getInstallationToken(installationId);
 
@@ -266,9 +286,9 @@ export const fetchPRDetails = async (
   );
 
   return {
-    prData: prResponse.data,
+    prData: prResponse.data as GitHubPRData,
     files: fileContents,
-    reviews: reviewsResponse.data,
+    reviews: reviewsResponse.data as unknown[],
   };
 };
 
@@ -338,5 +358,54 @@ export const postPullRequestComment = async (
       });
       throw err;
     }
+  }
+};
+
+export const postPullRequestInlineComments = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  installationId: number,
+  commitId: string,
+  comments: InlineReviewCommentInput[]
+) => {
+  if (!comments.length) return;
+
+  const token = await getInstallationToken(installationId);
+
+  try {
+    await withGitHubRateLimitRetry(
+      () => axios.post(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
+        {
+          commit_id: commitId,
+          event: "COMMENT",
+          comments: comments.map((comment) => ({
+            path: comment.path,
+            line: comment.line,
+            side: comment.side ?? "RIGHT",
+            body: comment.body,
+          })),
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+          },
+        }
+      ),
+      `postInlineReview:${owner}/${repo}#${prNumber}`
+    );
+    console.log("Inline review comment posted successfully");
+  } catch (err: unknown) {
+    const { status, data } = getAxiosErrorDetails(err);
+    console.error("Failed to post inline review comments", {
+      owner,
+      repo,
+      prNumber,
+      status,
+      data,
+    });
+    throw err;
   }
 };

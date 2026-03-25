@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { fetchPRDetails, postPullRequestComment } from "../services/githubService";
+import { fetchPRDetails, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 import { retryWithBackoff } from "../utils/retry";
 
@@ -39,6 +39,74 @@ const getErrorStack = (error: unknown): string | undefined => {
     return undefined;
 };
 
+const MAX_INLINE_COMMENTS = 3;
+
+const getFirstAddedLineFromPatch = (patch?: string): number | null => {
+    if (!patch) return null;
+
+    let currentNewLine = 0;
+    const lines = patch.split("\n");
+
+    for (const line of lines) {
+        const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (hunkMatch) {
+            currentNewLine = Number(hunkMatch[1]);
+            continue;
+        }
+
+        if (line.startsWith("+") && !line.startsWith("+++")) {
+            return currentNewLine;
+        }
+
+        if (!line.startsWith("-")) {
+            currentNewLine += 1;
+        }
+    }
+
+    return null;
+};
+
+const extractAnalysisHighlights = (analysis: string): string[] => {
+    const bullets = analysis
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => /^(?:-|\*|\d+\.)\s+/.test(line))
+        .map((line) => line.replace(/^(?:-|\*|\d+\.)\s+/, ""))
+        .filter((line) => line.length > 0);
+
+    if (bullets.length > 0) {
+        return bullets.slice(0, MAX_INLINE_COMMENTS);
+    }
+
+    return [analysis.replace(/\s+/g, " ").slice(0, 220)];
+};
+
+const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
+    const highlights = extractAnalysisHighlights(analysis);
+    const candidates = files
+        .filter((file) => file.status !== "removed" && file.patch)
+        .map((file) => ({
+            path: file.filename,
+            line: getFirstAddedLineFromPatch(file.patch),
+        }))
+        .filter((item): item is { path: string; line: number } => item.line !== null);
+
+    const seen = new Set<string>();
+    const dedupedCandidates = candidates.filter((item) => {
+        const key = `${item.path}:${item.line}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
+    return dedupedCandidates.slice(0, MAX_INLINE_COMMENTS).map((candidate, index) => ({
+        path: candidate.path,
+        line: candidate.line,
+        side: "RIGHT" as const,
+        body: `AI note: ${highlights[index % highlights.length]}`,
+    }));
+};
+
 //webhook handling
 export const handleWebhook = (req: Request, res: Response) => {
     const signature = req.headers["x-hub-signature-256"] as string;
@@ -64,7 +132,7 @@ export const handleWebhook = (req: Request, res: Response) => {
     console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
 
     const processPRData = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
-        const { files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
+        const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
 
         console.log(`Fetched ${files.length} files for PR #${prDataPayload.number}`);
 
@@ -80,6 +148,19 @@ export const handleWebhook = (req: Request, res: Response) => {
             `### AI Review\n\n${analysis}`,
             installationId
         );
+
+        const inlineComments = buildInlineComments(files, analysis);
+
+        if (inlineComments.length > 0 && prData.head?.sha) {
+            await postPullRequestInlineComments(
+                repoData.owner.login,
+                repoData.name,
+                prDataPayload.number,
+                installationId,
+                prData.head.sha,
+                inlineComments
+            );
+        }
     };
 
     //handle pr action
