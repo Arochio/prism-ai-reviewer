@@ -11,6 +11,7 @@ const getErrorMessage = (error: unknown): string => {
   return "Unknown error";
 };
 
+// Builds a Redis client from either URL form or host/port credentials.
 const buildRedisClient = (): RedisClientType => {
   const redisUrl = process.env.REDIS_URL;
   if (redisUrl) {
@@ -63,6 +64,7 @@ const getRedisClient = async (): Promise<RedisClientType | null> => {
 
 const normalizeKey = (key: string): string => `${CACHE_KEY_PREFIX}${key}`;
 
+// Reads a cached OpenAI response by key.
 export const getCachedOpenAIResponse = async (key: string): Promise<string | null> => {
   const client = await getRedisClient();
   if (!client) return null;
@@ -75,6 +77,7 @@ export const getCachedOpenAIResponse = async (key: string): Promise<string | nul
   }
 };
 
+// Writes a cached OpenAI response with configured TTL.
 export const setCachedOpenAIResponse = async (key: string, value: string): Promise<void> => {
   const client = await getRedisClient();
   if (!client) return;

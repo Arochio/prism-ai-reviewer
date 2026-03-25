@@ -1,6 +1,7 @@
 // Statuses that are permanent failures — no point retrying
 const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
 
+// Extracts HTTP status from unknown error objects when available.
 const getStatusCode = (error: unknown): number | undefined => {
   if (typeof error === "object" && error !== null && "response" in error) {
     const response = (error as { response?: { status?: number } }).response;
@@ -9,11 +10,13 @@ const getStatusCode = (error: unknown): number | undefined => {
   return undefined;
 };
 
+// Normalizes unknown errors into a message string.
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   return "Unknown error";
 };
 
+// Determines whether an error should be retried.
 const isRetryable = (err: unknown): boolean => {
   const status = getStatusCode(err);
   if (status !== undefined && NON_RETRYABLE_STATUSES.has(status)) return false;

@@ -33,6 +33,7 @@ interface FetchPRDetailsResult {
   reviews: unknown[];
 }
 
+// Normalizes unknown errors into a consistent log shape.
 const getAxiosErrorDetails = (error: unknown): { status?: number; data?: unknown; message: string; headers?: Record<string, unknown> } => {
   if (axios.isAxiosError<GitHubApiErrorResponse>(error)) {
     return {
@@ -52,6 +53,7 @@ const GITHUB_RATE_LIMIT_MAX_RETRIES = 2;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Reads a response header value across common key casing variations.
 const getHeaderValue = (headers: Record<string, unknown> | undefined, key: string): string | undefined => {
   if (!headers) return undefined;
   const value = headers[key] ?? headers[key.toLowerCase()] ?? headers[key.toUpperCase()];
@@ -69,6 +71,7 @@ const isGitHubRateLimitError = (status?: number, headers?: Record<string, unknow
   return false;
 };
 
+// Computes wait duration from GitHub rate-limit headers with a fallback delay.
 const getRateLimitDelayMs = (headers?: Record<string, unknown>, fallbackMs = 3000): number => {
   const retryAfter = getHeaderValue(headers, "retry-after");
   const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
@@ -86,6 +89,7 @@ const getRateLimitDelayMs = (headers?: Record<string, unknown>, fallbackMs = 300
   return fallbackMs;
 };
 
+// Retries GitHub requests when throttled by rate limits.
 const withGitHubRateLimitRetry = async <T>(
   operation: () => Promise<T>,
   label: string,
@@ -122,6 +126,7 @@ let cachedJWT: { token: string; expiresAt: number } | null = null;
 // Installation tokens are valid for 1 hour; cache per installationId for 55 minutes
 const installationTokenCache = new Map<number, { token: string; expiresAt: number }>();
 
+// Generates a signed GitHub App JWT used to request installation tokens.
 const generateJWT = () => {
   const rawKey = process.env.GITHUB_PRIVATE_KEY;
   if (!rawKey) {
@@ -156,7 +161,7 @@ const generateJWT = () => {
   return token;
 };
 
-//github installation token
+// Retrieves and caches a GitHub installation access token.
 const getInstallationToken = async (installationId: number) => {
   if (!installationId || Number.isNaN(installationId)) {
     throw new Error("Invalid installationId: " + installationId);
@@ -198,8 +203,7 @@ const getInstallationToken = async (installationId: number) => {
   }
 };
 
-//fetch pr details from url strings from webhook
-//used by /controllers/webhookController.ts
+// Fetches PR metadata, file list, file content, and review history.
 export const fetchPRDetails = async (
   owner: string,
   repo: string,
@@ -215,6 +219,7 @@ export const fetchPRDetails = async (
     Accept: "application/vnd.github+json",
   };
 
+  // Groups primary PR API calls under a shared retry envelope.
   const fetchAll = (hdrs: typeof headers): Promise<[
     AxiosResponse,
     AxiosResponse<GitHubChangedFile[]>,
@@ -262,7 +267,7 @@ export const fetchPRDetails = async (
 
   const files = filesResponse.data;
 
-  // Fetch content for each changed file; failures per file are caught individually
+  // Fetches content for changed files; individual file failures do not stop processing.
   const fileContents = await Promise.all(
     files
       .filter((f) => f.status !== "removed")
@@ -296,6 +301,7 @@ export const fetchPRDetails = async (
 const GITHUB_COMMENT_MAX_LENGTH = 65_536;
 const TRUNCATION_NOTICE = "\n\n---\n> ⚠️ *Review truncated — exceeded GitHub's comment length limit.*";
 
+// Posts a standard PR issue comment.
 const postComment = async (token: string, owner: string, repo: string, prNumber: number, body: string) => {
   await withGitHubRateLimitRetry(
     () => axios.post(
@@ -312,7 +318,7 @@ const postComment = async (token: string, owner: string, repo: string, prNumber:
   );
 };
 
-//post pull request comment to github
+// Posts the top-level PR review summary comment with length safeguards.
 export const postPullRequestComment = async (
   owner: string,
   repo: string,
@@ -369,6 +375,7 @@ export const postPullRequestInlineComments = async (
   commitId: string,
   comments: InlineReviewCommentInput[]
 ) => {
+  // The GitHub Reviews API supports batching multiple inline comments in one request.
   if (!comments.length) return;
 
   const token = await getInstallationToken(installationId);

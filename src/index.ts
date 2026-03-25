@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+// Loads environment variables before any service initialization.
 dotenv.config();
 console.log("Env loaded:", { OPENAI_API_KEY: process.env.OPENAI_API_KEY ? "set" : "not set" });
 
@@ -8,7 +9,7 @@ import { openAIConfig } from "./config/openai.config";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-//validate dotenv config on startup
+// Validates required OpenAI configuration at application startup.
 const validateOpenAIConfig = () => {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is required");
@@ -20,6 +21,7 @@ const validateOpenAIConfig = () => {
 
 validateOpenAIConfig();
 
+// Parses incoming webhook JSON payloads.
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -30,4 +32,5 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
+// GitHub webhook endpoint.
 app.post("/webhook", handleWebhook);

@@ -26,7 +26,8 @@ export const createEmbedding = async (text: string): Promise<number[]> => {
   }
 };
 
-// Non-critical: storage failures are logged but do not throw
+// Persists embedding vectors for similarity lookups.
+// Storage failures are non-blocking and logged only.
 export const storeEmbedding = async (id: string, vector: number[], metadata: RecordMetadata): Promise<void> => {
   try {
     const index = pinecone.index(process.env.PINECONE_INDEX_NAME!);
@@ -39,7 +40,8 @@ export const storeEmbedding = async (id: string, vector: number[], metadata: Rec
   }
 };
 
-// Non-critical: returns empty array on failure so analysis is not blocked
+// Queries nearest vectors for contextual similarity.
+// Query failures return an empty result to avoid blocking analysis.
 export const querySimilar = async (vector: number[], topK: number = openAIConfig.vectorDbTopK): Promise<{ metadata?: RecordMetadata }[]> => {
   try {
     const index = pinecone.index(process.env.PINECONE_INDEX_NAME!);

@@ -39,8 +39,10 @@ const getErrorStack = (error: unknown): string | undefined => {
     return undefined;
 };
 
+// Limits the number of inline comments posted per PR event to reduce noise.
 const MAX_INLINE_COMMENTS = 3;
 
+// Finds the first added line in a unified diff patch for inline comment placement.
 const getFirstAddedLineFromPatch = (patch?: string): number | null => {
     if (!patch) return null;
 
@@ -66,6 +68,7 @@ const getFirstAddedLineFromPatch = (patch?: string): number | null => {
     return null;
 };
 
+// Extracts short actionable highlights from the model output.
 const extractAnalysisHighlights = (analysis: string): string[] => {
     const bullets = analysis
         .split("\n")
@@ -81,6 +84,7 @@ const extractAnalysisHighlights = (analysis: string): string[] => {
     return [analysis.replace(/\s+/g, " ").slice(0, 220)];
 };
 
+// Maps analysis highlights to changed file locations and removes duplicate targets.
 const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     const highlights = extractAnalysisHighlights(analysis);
     const candidates = files
@@ -131,6 +135,7 @@ export const handleWebhook = (req: Request, res: Response) => {
     const { action, pull_request: pr, repository: repo } = payload;
     console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
 
+    // Executes end-to-end PR analysis and posts summary plus inline comments.
     const processPRData = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
         const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
 

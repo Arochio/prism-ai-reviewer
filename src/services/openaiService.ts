@@ -15,11 +15,13 @@ interface ProcessedFile extends AnalyzableFile {
   similarText: string;
 }
 
+// Converts unknown errors into a stable log message.
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   return "Unknown error";
 };
 
+// Builds a deterministic cache key from model settings and truncated file content.
 const buildCacheKey = (files: AnalyzableFile[]) => {
   const fileKey = files
     .map((file) => `${file.filename}:${(file.content || "").slice(0, 128)}`)
@@ -36,6 +38,7 @@ const buildCacheKey = (files: AnalyzableFile[]) => {
 
 // get file analysis for GitHub PR comment
 export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number) => {
+  // Limits file volume before analysis to control token and runtime usage.
   const limitedFiles = files.slice(0, openAIConfig.totalFilesLimit);
 
   const processedFiles: ProcessedFile[] = await Promise.all(
@@ -80,13 +83,14 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number) =>
 
   const cacheKey = buildCacheKey(processedFiles);
   if (openAIConfig.enableCache) {
+    // Returns early on cache hit to avoid duplicate OpenAI requests.
     const cached = await getCachedOpenAIResponse(cacheKey);
     if (cached) {
       return cached;
     }
   }
 
-  //initial prompt creation
+  // Constructs the user payload from normalized file snapshots.
   const prompt = [
     { role: "system", content: openAIConfig.textPromptPrefix },
     {
@@ -138,10 +142,11 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number) =>
   }
 
   if (openAIConfig.enableCache) {
+    // Persists successful responses for subsequent identical requests.
     await setCachedOpenAIResponse(cacheKey, result);
   }
 
-  // Store embeddings after analysis — non-critical, errors are swallowed in storeEmbedding
+  // Stores embeddings after analysis; failures are non-blocking in vector service.
   for (const file of processedFiles) {
     if (file.embedding) {
       await storeEmbedding(`pr-${prNumber}-${file.filename}`, file.embedding, { prNumber, filename: file.filename });
