@@ -1,4 +1,7 @@
 // Statuses that are permanent failures — no point retrying
+import { logger } from "../services/logger";
+
+// Statuses that are permanent failures — no point retrying
 const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404, 422]);
 
 // Extracts HTTP status from unknown error objects when available.
@@ -47,26 +50,26 @@ export const retryWithBackoff = async <T>(
       lastErr = err;
 
       if (!isRetryable(err)) {
-        console.error(`[retry] ${label} failed with non-retryable error — aborting`, {
+        logger.error({
           attempt,
           status: getStatusCode(err),
           message: getErrorMessage(err),
-        });
+        }, `[retry] ${label} failed with non-retryable error — aborting`);
         throw err;
       }
 
       if (attempt === maxAttempts) {
-        console.error(`[retry] ${label} failed after ${maxAttempts} attempts`, {
+        logger.error({
           message: getErrorMessage(err),
-        });
+        }, `[retry] ${label} failed after ${maxAttempts} attempts`);
         break;
       }
 
       const delayMs = baseDelayMs * 2 ** (attempt - 1);
-      console.warn(`[retry] ${label} attempt ${attempt} failed — retrying in ${delayMs}ms`, {
+      logger.warn({
         status: getStatusCode(err),
         message: getErrorMessage(err),
-      });
+      }, `[retry] ${label} attempt ${attempt} failed — retrying in ${delayMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }

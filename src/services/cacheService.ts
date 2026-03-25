@@ -1,4 +1,5 @@
 import { createClient, RedisClientType } from "redis";
+import { logger } from "./logger";
 
 const CACHE_KEY_PREFIX = "prism:openai:";
 const CACHE_TTL_SECONDS = Number(process.env.OPENAI_CACHE_TTL_SECONDS || 3600);
@@ -43,20 +44,20 @@ const getRedisClient = async (): Promise<RedisClientType | null> => {
     if (!redisClient) {
       redisClient = buildRedisClient();
       redisClient.on("error", (err) => {
-        console.error("Redis client error", { message: err.message });
+        logger.error({ message: err.message }, "Redis client error");
       });
     }
 
     if (!redisClient.isOpen) {
       await redisClient.connect();
-      console.log("Redis connected for OpenAI cache");
+      logger.info("Redis connected for OpenAI cache");
     }
 
     return redisClient;
   } catch (err: unknown) {
-    console.error("Failed to connect to Redis; cache disabled for this runtime", {
+    logger.error({
       message: getErrorMessage(err),
-    });
+    }, "Failed to connect to Redis; cache disabled for this runtime");
     redisDisabled = true;
     return null;
   }
@@ -72,7 +73,7 @@ export const getCachedOpenAIResponse = async (key: string): Promise<string | nul
   try {
     return await client.get(normalizeKey(key));
   } catch (err: unknown) {
-    console.error("Failed to read from Redis cache", { message: getErrorMessage(err) });
+    logger.error({ message: getErrorMessage(err) }, "Failed to read from Redis cache");
     return null;
   }
 };
@@ -85,6 +86,6 @@ export const setCachedOpenAIResponse = async (key: string, value: string): Promi
   try {
     await client.set(normalizeKey(key), value, { EX: CACHE_TTL_SECONDS });
   } catch (err: unknown) {
-    console.error("Failed to write to Redis cache", { message: getErrorMessage(err) });
+    logger.error({ message: getErrorMessage(err) }, "Failed to write to Redis cache");
   }
 };

@@ -4,6 +4,7 @@ import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestCom
 import { analyzeFiles } from "../services/openaiService";
 import { retryWithBackoff } from "../utils/retry";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
+import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
     number: number;
@@ -47,6 +48,21 @@ interface IssueCommentPayload {
     installation?: { id?: number };
 }
 
+interface PullRequestReviewCommentPayload {
+    action: string;
+    comment: {
+        id: number;
+        body: string;
+        user: { login: string };
+        in_reply_to_id?: number;
+    };
+    pull_request: {
+        number: number;
+    };
+    repository: WebhookRepository;
+    installation?: { id?: number };
+}
+
 const getErrorMessage = (error: unknown): string => {
     if (error instanceof Error) return error.message;
     return "Unknown error";
@@ -84,6 +100,25 @@ const isValidIssueCommentPayload = (body: unknown): body is IssueCommentPayload 
 
     const issue = b.issue as Record<string, unknown> | undefined;
     if (!issue || typeof issue.number !== 'number') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidPRReviewCommentPayload = (body: unknown): body is PullRequestReviewCommentPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const comment = b.comment as Record<string, unknown> | undefined;
+    if (!comment || typeof comment.id !== 'number' || typeof comment.body !== 'string') return false;
+    if (!comment.user || typeof (comment.user as Record<string, unknown>).login !== 'string') return false;
+
+    const pullRequest = b.pull_request as Record<string, unknown> | undefined;
+    if (!pullRequest || typeof pullRequest.number !== 'number') return false;
 
     const repo = b.repository as Record<string, unknown> | undefined;
     if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
@@ -174,7 +209,7 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
 const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
     if (!secret) {
-        console.warn("GITHUB_WEBHOOK_SECRET is not set — webhook signature verification is disabled");
+        logger.warn("GITHUB_WEBHOOK_SECRET is not set — webhook signature verification is disabled");
         return false;
     }
 
@@ -204,22 +239,22 @@ const validateInstallationId = (installation?: { id?: unknown }): number | null 
 const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
     const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
 
-    console.log(`Fetched ${files.length} files for PR #${prDataPayload.number}`);
+    logger.info({ fileCount: files.length, prNumber: prDataPayload.number }, "Fetched files for PR analysis");
 
     let analysis: string;
     try {
         analysis = await analyzeFiles(files, prDataPayload.number);
     } catch (err: unknown) {
-        console.error("AI analysis failed — skipping comment posting", {
+        logger.error({
             prNumber: prDataPayload.number,
             repo: repoData.full_name,
             message: getErrorMessage(err),
             stack: getErrorStack(err),
-        });
+        }, "AI analysis failed — skipping comment posting");
         throw err;
     }
 
-    console.log("AI Review for PR:", analysis);
+    logger.info({ prNumber: prDataPayload.number, analysis }, "AI Review for PR");
 
     // Post results independently so a comment failure doesn't lose the analysis
     // or cause duplicate OpenAI calls on retry.
@@ -232,10 +267,10 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
             installationId
         );
     } catch (err: unknown) {
-        console.error("Failed to post PR summary comment", {
+        logger.error({
             prNumber: prDataPayload.number,
             message: getErrorMessage(err),
-        });
+        }, "Failed to post PR summary comment");
     }
 
     try {
@@ -252,10 +287,10 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
             );
         }
     } catch (err: unknown) {
-        console.error("Failed to post inline review comments", {
+        logger.error({
             prNumber: prDataPayload.number,
             message: getErrorMessage(err),
-        });
+        }, "Failed to post inline review comments");
     }
 };
 
@@ -267,10 +302,27 @@ const handleIssueCommentEvent = (req: Request, res: Response) => {
     const icPayload = req.body;
     if (icPayload.action === "created" && icPayload.issue.pull_request) {
         handleFeedbackComment(icPayload).catch((err: unknown) => {
-            console.error("Feedback processing failed", {
+            logger.error({
                 commentId: icPayload.comment.id,
                 message: getErrorMessage(err),
-            });
+            }, "Feedback processing failed");
+        });
+    }
+    return res.sendStatus(200);
+};
+
+// Handles pull_request_review_comment webhook events for feedback processing.
+const handlePullRequestReviewCommentEvent = (req: Request, res: Response) => {
+    if (!isValidPRReviewCommentPayload(req.body)) {
+        return res.status(422).send("Invalid pull_request_review_comment payload");
+    }
+    const reviewPayload = req.body;
+    if (reviewPayload.action === "created") {
+        handleReviewFeedbackComment(reviewPayload).catch((err: unknown) => {
+            logger.error({
+                commentId: reviewPayload.comment.id,
+                message: getErrorMessage(err),
+            }, "Review feedback processing failed");
         });
     }
     return res.sendStatus(200);
@@ -283,17 +335,17 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
     }
     const payload = req.body;
     const { action, pull_request: pr, repository: repo } = payload;
-    console.log(`PR ${action}: ${pr.title} by ${pr.user.login}`);
+    logger.info({ action, prTitle: pr.title, author: pr.user.login, prNumber: pr.number }, "PR webhook received");
 
     if (action === "opened" || action === "synchronize") {
         const installationId = validateInstallationId(payload.installation);
         if (!installationId) {
-            console.error("Missing or invalid installation.id in webhook payload", {
+            logger.error({
                 action: payload.action,
                 repo: payload.repository?.full_name,
                 prNumber: payload.pull_request?.number,
                 installationId: payload.installation?.id,
-            });
+            }, "Missing or invalid installation.id in webhook payload");
             return res.status(400).send("Missing or invalid installation.id");
         }
 
@@ -303,13 +355,13 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
             1000,
             `PR #${pr.number} analysis`
         ).catch((err: unknown) => {
-            console.error("analyzeAndCommentOnPR failed after all retries", {
+            logger.error({
                 prNumber: pr.number,
                 repo: repo.full_name,
                 action,
                 message: getErrorMessage(err),
                 stack: getErrorStack(err),
-            });
+            }, "analyzeAndCommentOnPR failed after all retries");
         });
     }
 
@@ -327,6 +379,8 @@ export const handleWebhook = (req: Request, res: Response) => {
     switch (event) {
         case "issue_comment":
             return handleIssueCommentEvent(req, res);
+        case "pull_request_review_comment":
+            return handlePullRequestReviewCommentEvent(req, res);
         case "pull_request":
             return handlePullRequestEvent(req, res);
         default:
@@ -338,53 +392,96 @@ export const handleWebhook = (req: Request, res: Response) => {
  * Processes a feedback command left as a PR comment reply.
  * Parses the command, fetches the parent AI review comment, and stores the feedback.
  */
-const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void> => {
-    const parsed = parseFeedbackCommand(payload.comment.body);
+interface FeedbackCommandContext {
+    commentId: number;
+    commentBody: string;
+    inReplyToId?: number;
+    prNumber: number;
+    owner: string;
+    repo: string;
+    repoFullName: string;
+    installation?: { id?: unknown };
+}
+
+const processFeedbackCommand = async (context: FeedbackCommandContext): Promise<void> => {
+    const parsed = parseFeedbackCommand(context.commentBody);
     if (!parsed) return; // not a feedback command
 
-    const installationId = validateInstallationId(payload.installation);
+    logger.info({
+        commentId: context.commentId,
+        prNumber: context.prNumber,
+        sentiment: parsed.sentiment,
+    }, "Feedback command detected");
+
+    const installationId = validateInstallationId(context.installation);
     if (!installationId) {
-        console.warn("Feedback comment missing or invalid installation.id — skipping", { installationId: payload.installation?.id });
+        logger.warn({ installationId: context.installation?.id }, "Feedback comment missing or invalid installation.id — skipping");
         return;
     }
 
     // Resolve the AI review text this feedback refers to.
     let aiReviewSnippet = '';
-    const parentId = payload.comment.in_reply_to_id;
+    const parentId = context.inReplyToId;
     if (parentId) {
         const parentBody = await fetchCommentBody(
-            payload.repository.owner.login,
-            payload.repository.name,
+            context.owner,
+            context.repo,
             parentId,
             installationId
         );
         if (parentBody) {
             aiReviewSnippet = parentBody;
         } else {
-            console.warn("Could not fetch parent comment body for feedback context", {
+            logger.warn({
                 parentId,
-                prNumber: payload.issue.number,
-            });
+                prNumber: context.prNumber,
+            }, "Could not fetch parent comment body for feedback context");
         }
     } else {
-        console.warn("Feedback comment is not a reply — no AI review context available", {
-            commentId: payload.comment.id,
-            prNumber: payload.issue.number,
-        });
+        logger.warn({
+            commentId: context.commentId,
+            prNumber: context.prNumber,
+        }, "Feedback comment is not a reply — no AI review context available");
     }
 
     await storeFeedback({
-        commentId: payload.comment.id,
-        prNumber: payload.issue.number,
-        repo: payload.repository.full_name,
+        commentId: context.commentId,
+        prNumber: context.prNumber,
+        repo: context.repoFullName,
         sentiment: parsed.sentiment,
         userFeedback: parsed.explanation || `(${parsed.sentiment})`,
         aiReviewSnippet: aiReviewSnippet.slice(0, 2000),
     });
 
-    console.log('Feedback recorded', {
-        prNumber: payload.issue.number,
+    logger.info({
+        prNumber: context.prNumber,
         sentiment: parsed.sentiment,
+        commentId: context.commentId,
+    }, "Feedback recorded");
+};
+
+const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void> => {
+    await processFeedbackCommand({
         commentId: payload.comment.id,
+        commentBody: payload.comment.body,
+        inReplyToId: payload.comment.in_reply_to_id,
+        prNumber: payload.issue.number,
+        owner: payload.repository.owner.login,
+        repo: payload.repository.name,
+        repoFullName: payload.repository.full_name,
+        installation: payload.installation,
+    });
+};
+
+const handleReviewFeedbackComment = async (payload: PullRequestReviewCommentPayload): Promise<void> => {
+    await processFeedbackCommand({
+        commentId: payload.comment.id,
+        commentBody: payload.comment.body,
+        inReplyToId: payload.comment.in_reply_to_id,
+        prNumber: payload.pull_request.number,
+        owner: payload.repository.owner.login,
+        repo: payload.repository.name,
+        repoFullName: payload.repository.full_name,
+        installation: payload.installation,
     });
 };

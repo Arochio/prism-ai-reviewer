@@ -1,11 +1,11 @@
 import dotenv from "dotenv";
 // Loads environment variables before any service initialization.
 dotenv.config();
-console.log("Env loaded:", { OPENAI_API_KEY: process.env.OPENAI_API_KEY ? "set" : "not set" });
 
 import express from "express";
 import { handleWebhook } from "./controllers/webhookController";
 import { openAIConfig } from "./config/openai.config";
+import { logger } from "./services/logger";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -29,7 +29,7 @@ app.get("/", (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info({ port: PORT }, "Server running");
 });
 
 // GitHub webhook endpoint.

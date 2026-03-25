@@ -1,6 +1,7 @@
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import type { AxiosResponse } from "axios";
+import { logger } from "./logger";
 
 interface GitHubApiErrorResponse {
   message?: string;
@@ -107,14 +108,14 @@ const withGitHubRateLimitRetry = async <T>(
       }
 
       const delayMs = getRateLimitDelayMs(headers, 3000 * (attempt + 1));
-      console.warn("GitHub API rate limit hit; retrying request", {
+      logger.warn({
         label,
         status,
         attempt: attempt + 1,
         maxRetries,
         delayMs,
         message,
-      });
+      }, "GitHub API rate limit hit; retrying request");
       await sleep(delayMs);
     }
   }
@@ -221,18 +222,18 @@ const getInstallationToken = async (installationId: number) => {
     // 404 = installation not found; evict any stale cache entry.
     if (status === 404) {
       installationTokenCache.delete(installationId);
-      console.error("Installation not found — the app may have been uninstalled or the ID is invalid", {
+      logger.error({
         installationId,
         status,
-      });
+      }, "Installation not found — the app may have been uninstalled or the ID is invalid");
       throw new Error(`GitHub installation ${installationId} not found (404). Verify the app is still installed.`);
     }
 
-    console.error("Failed to get installation token", {
+    logger.error({
       installationId,
       status,
       data,
-    });
+    }, "Failed to get installation token");
     throw err;
   }
 };
@@ -272,7 +273,7 @@ export const fetchPRDetails = async (
     const { status, data } = getAxiosErrorDetails(err);
     // If the cached token was revoked (401), evict it and retry once with a fresh token
     if (status === 401) {
-      console.warn("GitHub returned 401 — evicting cached token and retrying");
+      logger.warn("GitHub returned 401 — evicting cached token and retrying");
       installationTokenCache.delete(installationId);
       const freshToken = await getInstallationToken(installationId);
       const retryHeaders = { ...headers, Authorization: `Bearer ${freshToken}` };
@@ -280,19 +281,19 @@ export const fetchPRDetails = async (
         [prResponse, filesResponse, reviewsResponse] = await fetchAll(retryHeaders);
       } catch (retryErr: unknown) {
         const retryDetails = getAxiosErrorDetails(retryErr);
-        console.error("Failed to fetch PR data after token refresh", {
+        logger.error({
           owner, repo, prNumber,
           status: retryDetails.status,
           data: retryDetails.data,
-        });
+        }, "Failed to fetch PR data after token refresh");
         throw retryErr;
       }
     } else {
-      console.error("Failed to fetch PR data from GitHub", {
+      logger.error({
         owner, repo, prNumber,
         status,
         data,
-      });
+      }, "Failed to fetch PR data from GitHub");
       throw err;
     }
   }
@@ -335,10 +336,10 @@ export const fetchPRDetails = async (
           return { ...f, content };
         } catch (err: unknown) {
           const details = getAxiosErrorDetails(err);
-          console.error(`Failed to fetch content for file ${f.filename}`, {
+          logger.error({
             status: details.status,
             message: details.message,
-          });
+          }, `Failed to fetch content for file ${f.filename}`);
           return { ...f, content: null };
         }
       })
@@ -401,45 +402,45 @@ export const postPullRequestComment = async (
   const safeBody = truncateAtLineBoundary(body, maxContentLength);
 
   if (safeBody.length < body.length) {
-    console.warn("PR comment truncated to fit GitHub limit", {
+    logger.warn({
       owner, repo, prNumber,
       originalLength: body.length,
       truncatedLength: safeBody.length,
       charsDropped: body.length - safeBody.length,
-    });
+    }, "PR comment truncated to fit GitHub limit");
   }
 
   try {
     await postComment(token, owner, repo, prNumber, safeBody);
-    console.log("Comment posted successfully");
+    logger.info({ owner, repo, prNumber }, "Comment posted successfully");
   } catch (err: unknown) {
     const { status, data } = getAxiosErrorDetails(err);
     // 422 can still occur for other validation reasons — retry with a hard-truncated fallback
     if (status === 422) {
       const fallbackBody = truncateAtLineBoundary(body, HARD_FALLBACK_LENGTH);
-      console.warn("GitHub rejected comment with 422 — retrying with hard-truncated body", {
+      logger.warn({
         owner, repo, prNumber,
         originalLength: body.length,
         fallbackLength: fallbackBody.length,
-      });
+      }, "GitHub rejected comment with 422 — retrying with hard-truncated body");
       try {
         await postComment(token, owner, repo, prNumber, fallbackBody);
-        console.log("Comment posted successfully (truncated fallback)");
+        logger.info({ owner, repo, prNumber }, "Comment posted successfully (truncated fallback)");
       } catch (retryErr: unknown) {
         const retryDetails = getAxiosErrorDetails(retryErr);
-        console.error("Failed to post truncated PR comment", {
+        logger.error({
           owner, repo, prNumber,
           status: retryDetails.status,
           data: retryDetails.data,
-        });
+        }, "Failed to post truncated PR comment");
         throw retryErr;
       }
     } else {
-      console.error("Failed to post PR comment", {
+      logger.error({
         owner, repo, prNumber,
         status,
         data,
-      });
+      }, "Failed to post PR comment");
       throw err;
     }
   }
@@ -481,16 +482,16 @@ export const postPullRequestInlineComments = async (
       ),
       `postInlineReview:${owner}/${repo}#${prNumber}`
     );
-    console.log("Inline review comment posted successfully");
+    logger.info({ owner, repo, prNumber, commentCount: comments.length }, "Inline review comment posted successfully");
   } catch (err: unknown) {
     const { status, data } = getAxiosErrorDetails(err);
-    console.error("Failed to post inline review comments", {
+    logger.error({
       owner,
       repo,
       prNumber,
       status,
       data,
-    });
+    }, "Failed to post inline review comments");
     throw err;
   }
 };
@@ -504,22 +505,37 @@ export const fetchCommentBody = async (
 ): Promise<string | null> => {
   try {
     const token = await getInstallationToken(installationId);
-    const response = await withGitHubRateLimitRetry(
-      () => axios.get<{ body?: string }>(
-        `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-          },
+    const endpoints = [
+      `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+      `https://api.github.com/repos/${owner}/${repo}/pulls/comments/${commentId}`,
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await withGitHubRateLimitRetry(
+          () => axios.get<{ body?: string }>(
+            endpoint,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+              },
+            }
+          ),
+          `fetchCommentBody:${owner}/${repo}:${commentId}`
+        );
+        if (typeof response.data.body === "string") {
+          return response.data.body;
         }
-      ),
-      `fetchCommentBody:${owner}/${repo}:${commentId}`
-    );
-    return response.data.body ?? null;
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
   } catch (err: unknown) {
     const { status, message } = getAxiosErrorDetails(err);
-    console.error("Failed to fetch comment body", { owner, repo, commentId, status, message });
+    logger.error({ owner, repo, commentId, status, message }, "Failed to fetch comment body");
     return null;
   }
 };

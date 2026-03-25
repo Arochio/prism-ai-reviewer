@@ -9,6 +9,7 @@ import { runDesignPass } from '../pipeline/analyze/designPass';
 import { runPerformancePass } from '../pipeline/analyze/performancePass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
+import { logger } from './logger';
 
 // Converts unknown errors into a stable log message.
 const getErrorMessage = (error: unknown): string => {
@@ -60,17 +61,17 @@ export const callOpenAI = async (systemPrompt: string, userContent: string): Pro
   } catch (err: unknown) {
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
     const data = axios.isAxiosError(err) ? err.response?.data : undefined;
-    console.error("OpenAI API request failed", {
+    logger.error({
       status,
       data,
       message: getErrorMessage(err),
-    });
+    }, "OpenAI API request failed");
     throw err;
   }
 
   const result: string = response.data.choices?.[0]?.message?.content;
   if (!result) {
-    console.error("OpenAI returned an empty or unexpected response", { data: response.data });
+    logger.error({ data: response.data }, "OpenAI returned an empty or unexpected response");
     throw new Error("OpenAI returned no content in response");
   }
 

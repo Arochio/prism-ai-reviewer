@@ -1,5 +1,6 @@
 // Stores and retrieves user feedback on AI review comments for prompt refinement.
 import { createEmbedding, storeEmbedding, querySimilar } from './vectorService';
+import { logger } from './logger';
 
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
@@ -56,16 +57,16 @@ export const storeFeedback = async (record: FeedbackRecord): Promise<void> => {
       timestamp: new Date().toISOString(),
     });
 
-    console.log('Feedback stored', {
+    logger.info({
       commentId: record.commentId,
       prNumber: record.prNumber,
       sentiment: record.sentiment,
-    });
+    }, 'Feedback stored');
   } catch (err: unknown) {
-    console.error('Failed to store feedback — continuing without persistence', {
+    logger.error({
       commentId: record.commentId,
       message: getErrorMessage(err),
-    });
+    }, 'Failed to store feedback — continuing without persistence');
   }
 };
 
@@ -92,9 +93,9 @@ export const retrieveFeedback = async (codeSnippet: string, topK = 3): Promise<s
 
     return `\n\n<past_user_feedback>\nThe following is real user feedback on similar past reviews. Adjust your tone, severity, and focus based on this feedback.\n\n${feedbackItems.join('\n\n---\n\n')}\n</past_user_feedback>`;
   } catch (err: unknown) {
-    console.error('Failed to retrieve feedback — continuing without feedback context', {
+    logger.error({
       message: getErrorMessage(err),
-    });
+    }, 'Failed to retrieve feedback — continuing without feedback context');
     return '';
   }
 };
