@@ -34,14 +34,20 @@ export const analyzeFiles = async (files: any[], prNumber: number) => {
         ((f.content || "").length > openAIConfig.fileContentSizeLimit
           ? "\n\n...truncated..."
           : "");
-      
-      // Create embedding and query similar
-      const embedding = await createEmbedding(content);
-      const similar = await querySimilar(embedding);
-      const similarText = similar.length > 0 
-        ? `\n\nSimilar files in codebase: ${similar.map(s => s.metadata?.filename || 'unknown').join(', ')}`
-        : '';
-      
+
+      // Embedding and similarity are best-effort — failures do not block analysis
+      let embedding: number[] | null = null;
+      let similarText = '';
+      try {
+        embedding = await createEmbedding(content);
+        const similar = await querySimilar(embedding, openAIConfig.vectorDbTopK);
+        if (similar.length > 0) {
+          similarText = `\n\nSimilar files in codebase: ${similar.map(s => s.metadata?.['filename'] || 'unknown').join(', ')}`;
+        }
+      } catch (err: any) {
+        console.error(`Embedding/similarity skipped for ${f.filename}`, { message: err.message });
+      }
+
       return {
         ...f,
         content,
@@ -72,35 +78,51 @@ export const analyzeFiles = async (files: any[], prNumber: number) => {
     },
   ];
 
-  const response = await axios.post(
-    "https://api.openai.com/v1/chat/completions",
-    {
-      model: openAIConfig.model,
-      messages: prompt,
-      max_tokens: openAIConfig.maxTokens,
-      temperature: openAIConfig.temperature,
-      top_p: openAIConfig.topP,
-      n: openAIConfig.n,
-      frequency_penalty: openAIConfig.frequencyPenalty,
-      presence_penalty: openAIConfig.presencePenalty,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
+  let response;
+  try {
+    response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: openAIConfig.model,
+        messages: prompt,
+        max_tokens: openAIConfig.maxTokens,
+        temperature: openAIConfig.temperature,
+        top_p: openAIConfig.topP,
+        n: openAIConfig.n,
+        frequency_penalty: openAIConfig.frequencyPenalty,
+        presence_penalty: openAIConfig.presencePenalty,
       },
-    }
-  );
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  } catch (err: any) {
+    console.error("OpenAI API request failed", {
+      status: err.response?.status,
+      data: err.response?.data,
+      message: err.message,
+    });
+    throw err;
+  }
 
-  const result = response.data.choices?.[0]?.message?.content ?? "";
+  const result: string = response.data.choices?.[0]?.message?.content;
+  if (!result) {
+    console.error("OpenAI returned an empty or unexpected response", { data: response.data });
+    throw new Error("OpenAI returned no content in response");
+  }
 
   if (openAIConfig.enableCache) {
     openAICache.set(cacheKey, result);
   }
 
-  // Store embeddings after analysis
+  // Store embeddings after analysis — non-critical, errors are swallowed in storeEmbedding
   for (const file of processedFiles) {
-    await storeEmbedding(`pr-${prNumber}-${file.filename}`, file.embedding, { prNumber, filename: file.filename });
+    if (file.embedding) {
+      await storeEmbedding(`pr-${prNumber}-${file.filename}`, file.embedding, { prNumber, filename: file.filename });
+    }
   }
 
   return result;

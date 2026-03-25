@@ -1,6 +1,12 @@
 import axios from "axios";
 import jwt from "jsonwebtoken";
 
+// JWT is valid for 10 minutes; cache it for 9 to allow a safety margin
+let cachedJWT: { token: string; expiresAt: number } | null = null;
+
+// Installation tokens are valid for 1 hour; cache per installationId for 55 minutes
+const installationTokenCache = new Map<number, { token: string; expiresAt: number }>();
+
 const generateJWT = () => {
   const rawKey = process.env.GITHUB_PRIVATE_KEY;
   if (!rawKey) {
@@ -16,7 +22,11 @@ const generateJWT = () => {
     throw new Error("GITHUB_PRIVATE_KEY must be a PEM formatted private key starting with -----BEGIN PRIVATE KEY----- or -----BEGIN RSA PRIVATE KEY-----");
   }
 
-  return jwt.sign(
+  if (cachedJWT && Date.now() < cachedJWT.expiresAt) {
+    return cachedJWT.token;
+  }
+
+  const token = jwt.sign(
     {
       iat: Math.floor(Date.now() / 1000) - 60,
       exp: Math.floor(Date.now() / 1000) + 600,
@@ -25,16 +35,24 @@ const generateJWT = () => {
     privateKey,
     { algorithm: "RS256" }
   );
+
+  // Cache for 9 minutes (540,000 ms)
+  cachedJWT = { token, expiresAt: Date.now() + 540_000 };
+  return token;
 };
 
 //github installation token
 const getInstallationToken = async (installationId: number) => {
-  const jwtToken = generateJWT();
-
-  console.log(installationId);
   if (!installationId || Number.isNaN(installationId)) {
     throw new Error("Invalid installationId: " + installationId);
   }
+
+  const cached = installationTokenCache.get(installationId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.token;
+  }
+
+  const jwtToken = generateJWT();
 
   try {
     const response = await axios.post(
@@ -48,7 +66,10 @@ const getInstallationToken = async (installationId: number) => {
       }
     );
 
-    return response.data.token;
+    const token = response.data.token;
+    // Cache for 55 minutes (3,300,000 ms); GitHub tokens expire after 60 minutes
+    installationTokenCache.set(installationId, { token, expiresAt: Date.now() + 3_300_000 });
+    return token;
   } catch (err: any) {
     console.error("Failed to get installation token", {
       installationId,
@@ -67,37 +88,73 @@ export const fetchPRDetails = async (
   prNumber: number,
   installationId: number
 ) => {
-  const token = await getInstallationToken(installationId);
+  let token: string;
+  try {
+    token = await getInstallationToken(installationId);
+  } catch (err) {
+    throw err; // already logged in getInstallationToken
+  }
+
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
   };
 
-  const prResponse = await axios.get(
-    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`,
-    { headers }
-  );
+  const fetchAll = (hdrs: typeof headers) => Promise.all([
+    axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: hdrs }),
+    axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`, { headers: hdrs }),
+    axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { headers: hdrs }),
+  ]);
 
-  const filesResponse = await axios.get(
-    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`,
-    { headers }
-  );
+  let prResponse, filesResponse, reviewsResponse;
+  try {
+    [prResponse, filesResponse, reviewsResponse] = await fetchAll(headers);
+  } catch (err: any) {
+    // If the cached token was revoked (401), evict it and retry once with a fresh token
+    if (err.response?.status === 401) {
+      console.warn("GitHub returned 401 — evicting cached token and retrying", { installationId });
+      installationTokenCache.delete(installationId);
+      const freshToken = await getInstallationToken(installationId);
+      const retryHeaders = { ...headers, Authorization: `Bearer ${freshToken}` };
+      try {
+        [prResponse, filesResponse, reviewsResponse] = await fetchAll(retryHeaders);
+      } catch (retryErr: any) {
+        console.error("Failed to fetch PR data after token refresh", {
+          owner, repo, prNumber,
+          status: retryErr.response?.status,
+          data: retryErr.response?.data,
+        });
+        throw retryErr;
+      }
+    } else {
+      console.error("Failed to fetch PR data from GitHub", {
+        owner, repo, prNumber,
+        status: err.response?.status,
+        data: err.response?.data,
+      });
+      throw err;
+    }
+  }
+
   const files = filesResponse.data;
 
-  // Fetch content for each changed file
+  // Fetch content for each changed file; failures per file are caught individually
   const fileContents = await Promise.all(
     files
       .filter((f: any) => f.status !== "removed")
       .map(async (f: any) => {
         if (!f.raw_url) return { ...f, content: null };
-        const r = await axios.get(f.raw_url, { headers });
-        return { ...f, content: r.data };
+        try {
+          const r = await axios.get(f.raw_url, { headers });
+          return { ...f, content: r.data };
+        } catch (err: any) {
+          console.error(`Failed to fetch content for file ${f.filename}`, {
+            status: err.response?.status,
+            message: err.message,
+          });
+          return { ...f, content: null };
+        }
       })
-  );
-
-  const reviewsResponse = await axios.get(
-    `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
-    { headers }
   );
 
   return {
@@ -105,6 +162,23 @@ export const fetchPRDetails = async (
     files: fileContents,
     reviews: reviewsResponse.data,
   };
+};
+
+// GitHub enforces a 65,536 character limit on issue comments
+const GITHUB_COMMENT_MAX_LENGTH = 65_536;
+const TRUNCATION_NOTICE = "\n\n---\n> ⚠️ *Review truncated — exceeded GitHub's comment length limit.*";
+
+const postComment = async (token: string, owner: string, repo: string, prNumber: number, body: string) => {
+  await axios.post(
+    `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+    { body },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+      },
+    }
+  );
 };
 
 //post pull request comment to github
@@ -116,27 +190,40 @@ export const postPullRequestComment = async (
   installationId: number
 ) => {
   const token = await getInstallationToken(installationId);
+
+  // Truncate proactively if body exceeds GitHub's limit
+  const safeBody = body.length > GITHUB_COMMENT_MAX_LENGTH
+    ? body.slice(0, GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length) + TRUNCATION_NOTICE
+    : body;
+
   try {
-    await axios.post(
-      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
-      { body },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json",
-        },
-      }
-    );
+    await postComment(token, owner, repo, prNumber, safeBody);
     console.log("Comment posted successfully");
   } catch (err: any) {
-    console.error("Failed to post PR comment", {
-      owner,
-      repo,
-      prNumber,
-      installationId,
-      status: err.response?.status,
-      data: err.response?.data,
-    });
-    throw err;
+    // 422 can still occur for other validation reasons — retry with a hard-truncated fallback
+    if (err.response?.status === 422) {
+      console.warn("GitHub rejected comment with 422 — retrying with hard-truncated body", {
+        owner, repo, prNumber, originalLength: body.length,
+      });
+      const fallbackBody = body.slice(0, 10_000) + TRUNCATION_NOTICE;
+      try {
+        await postComment(token, owner, repo, prNumber, fallbackBody);
+        console.log("Comment posted successfully (truncated fallback)");
+      } catch (retryErr: any) {
+        console.error("Failed to post truncated PR comment", {
+          owner, repo, prNumber,
+          status: retryErr.response?.status,
+          data: retryErr.response?.data,
+        });
+        throw retryErr;
+      }
+    } else {
+      console.error("Failed to post PR comment", {
+        owner, repo, prNumber, installationId,
+        status: err.response?.status,
+        data: err.response?.data,
+      });
+      throw err;
+    }
   }
 };

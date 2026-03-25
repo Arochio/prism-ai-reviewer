@@ -54,7 +54,13 @@ export const handleWebhook = (req: Request, res: Response) => {
         }
 
         processPRData(pr, repo, installationId).catch((err) => {
-            console.error("processPRData error", err);
+            console.error("processPRData error", {
+                prNumber: pr.number,
+                repo: repo.full_name,
+                action,
+                message: err.message,
+                stack: err.stack,
+            });
         });
     }
 

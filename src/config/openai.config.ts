@@ -28,8 +28,15 @@ const defaultConfig: OpenAIConfig = {
   bypassLargeFiles: true,
   enableCache: true,
   textPromptPrefix:
-    "You are an expert code reviewer. Analyze the changed file content and give concise, actionable bullet points (security, style, correctness).",
-  enableEmbeddings: false,
+    "You are an expert code reviewer. Analyze the changed file content and provide a structured review with the following sections:\n\n" +
+    "**Risk Level**: Assign an overall risk level (🔴 High / 🟡 Medium / 🟢 Low) based on the severity of issues found.\n\n" +
+    "**Security**: Identify any vulnerabilities (e.g. injection, auth issues, exposed secrets, OWASP Top 10). Label each finding with [High], [Medium], or [Low] risk.\n\n" +
+    "**Correctness**: Flag logic errors, edge cases, null/undefined issues, or incorrect assumptions.\n\n" +
+    "**Performance**: Note inefficient algorithms, unnecessary re-renders, blocking calls, or memory concerns.\n\n" +
+    "**Style & Maintainability**: Comment on readability, naming conventions, code duplication, and adherence to best practices.\n\n" +
+    "**Suggestions**: Provide 1-3 concrete, actionable improvements with brief code examples where helpful.\n\n" +
+    "Be concise. Skip sections that have no findings. If similar files were provided, use them for consistency context.",
+  enableEmbeddings: true,
   vectorDbTopK: 5,
 };
 
