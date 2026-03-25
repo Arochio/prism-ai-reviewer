@@ -416,3 +416,32 @@ export const postPullRequestInlineComments = async (
     throw err;
   }
 };
+
+// Fetches the body of a single issue/PR comment by ID. Returns null on failure.
+export const fetchCommentBody = async (
+  owner: string,
+  repo: string,
+  commentId: number,
+  installationId: number
+): Promise<string | null> => {
+  try {
+    const token = await getInstallationToken(installationId);
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<{ body?: string }>(
+        `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+          },
+        }
+      ),
+      `fetchCommentBody:${owner}/${repo}:${commentId}`
+    );
+    return response.data.body ?? null;
+  } catch (err: unknown) {
+    const { status, message } = getAxiosErrorDetails(err);
+    console.error("Failed to fetch comment body", { owner, repo, commentId, status, message });
+    return null;
+  }
+};

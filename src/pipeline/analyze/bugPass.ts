@@ -7,6 +7,8 @@ const BUG_PASS_SYSTEM_PROMPT =
   '- Security: injection flaws, authentication/authorisation bypasses, exposed secrets, OWASP Top 10 issues\n' +
   '- Correctness: logic errors, off-by-one errors, null/undefined dereferences, incorrect assumptions\n' +
   '- Error handling: unhandled exceptions, swallowed errors, missing input validation\n\n' +
+  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
+  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +
   'For each finding output exactly one bullet:\n' +
   '`- [<severity>] <filename>: <concise description>`\n' +
   'Severity must be one of: Critical, High, Medium, Low.\n' +

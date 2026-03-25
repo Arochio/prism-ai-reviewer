@@ -1,8 +1,9 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { fetchPRDetails, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
+import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 import { retryWithBackoff } from "../utils/retry";
+import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
 
 interface WebhookPullRequest {
     number: number;
@@ -27,6 +28,23 @@ interface WebhookPayload {
     installation?: {
         id?: number;
     };
+}
+
+interface IssueCommentPayload {
+    action: string;
+    comment: {
+        id: number;
+        body: string;
+        user: { login: string };
+        /** GitHub populates this when replying to another comment. */
+        in_reply_to_id?: number;
+    };
+    issue: {
+        number: number;
+        pull_request?: { url: string };
+    };
+    repository: WebhookRepository;
+    installation?: { id?: number };
 }
 
 const getErrorMessage = (error: unknown): string => {
@@ -125,8 +143,23 @@ export const handleWebhook = (req: Request, res: Response) => {
         }
     }
 
-    //handle if event isnt a pr
     const event = req.headers["x-github-event"] as string;
+
+    // Handle feedback via issue comment replies.
+    if (event === "issue_comment") {
+        const icPayload = req.body as IssueCommentPayload;
+        if (icPayload.action === "created" && icPayload.issue.pull_request) {
+            handleFeedbackComment(icPayload).catch((err: unknown) => {
+                console.error("Feedback processing failed", {
+                    commentId: icPayload.comment.id,
+                    message: getErrorMessage(err),
+                });
+            });
+        }
+        return res.sendStatus(200);
+    }
+
+    //handle if event isnt a pr
     if (event !== "pull_request") {
         return res.status(200).send("Event ignored");
     }
@@ -197,4 +230,47 @@ export const handleWebhook = (req: Request, res: Response) => {
     }
 
     res.sendStatus(200);
+};
+
+/*
+ * Processes a feedback command left as a PR comment reply.
+ * Parses the command, fetches the parent AI review comment, and stores the feedback.
+ */
+const handleFeedbackComment = async (payload: IssueCommentPayload): Promise<void> => {
+    const parsed = parseFeedbackCommand(payload.comment.body);
+    if (!parsed) return; // not a feedback command
+
+    const installationId = payload.installation?.id;
+    if (!installationId) {
+        console.warn("Feedback comment missing installation.id — skipping");
+        return;
+    }
+
+    // Resolve the AI review text this feedback refers to.
+    let aiReviewSnippet = '';
+    const parentId = payload.comment.in_reply_to_id;
+    if (parentId) {
+        const parentBody = await fetchCommentBody(
+            payload.repository.owner.login,
+            payload.repository.name,
+            parentId,
+            installationId
+        );
+        aiReviewSnippet = parentBody || '';
+    }
+
+    await storeFeedback({
+        commentId: payload.comment.id,
+        prNumber: payload.issue.number,
+        repo: payload.repository.full_name,
+        sentiment: parsed.sentiment,
+        userFeedback: parsed.explanation || `(${parsed.sentiment})`,
+        aiReviewSnippet: aiReviewSnippet.slice(0, 2000),
+    });
+
+    console.log('Feedback recorded', {
+        prNumber: payload.issue.number,
+        sentiment: parsed.sentiment,
+        commentId: payload.comment.id,
+    });
 };

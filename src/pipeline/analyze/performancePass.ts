@@ -7,8 +7,8 @@ const PERFORMANCE_PASS_SYSTEM_PROMPT =
   '- Algorithmic complexity: O(n\u00b2) or worse loops, redundant iterations, inefficient data structures\n' +
   '- I/O and concurrency: sequential awaits that could be parallelised, blocking synchronous calls in async paths\n' +
   '- Memory: large allocations inside loops, unbounded caches, object churn\n' +
-  '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n\n' +
-  'For each finding output exactly one bullet:\n' +
+  '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n\n' +  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
+  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +  'For each finding output exactly one bullet:\n' +
   '`- [<severity>] <filename>: <concise description>`\n' +
   'Severity must be one of: High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No performance findings.';
