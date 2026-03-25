@@ -24,7 +24,7 @@ const defaultConfig: OpenAIConfig = {
   n: 1,
   frequencyPenalty: 0,
   presencePenalty: 0,
-  fileContentSizeLimit: 24_000,
+  fileContentSizeLimit: 16_000,
   totalFilesLimit: 8,
   bypassLargeFiles: true,
   enableCache: true,
