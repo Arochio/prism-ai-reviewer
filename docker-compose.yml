@@ -1,0 +1,26 @@
+services:
+  prism-ai-reviewer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: prism-ai-reviewer:latest
+    container_name: prism-ai-reviewer
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: prism-ai-reviewer-ngrok
+    command: ["http", "prism-ai-reviewer:3000"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"
+    depends_on:
+      - prism-ai-reviewer
+    restart: unless-stopped
+    profiles:
+      - tunnel
