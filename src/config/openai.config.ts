@@ -14,6 +14,8 @@ export interface OpenAIConfig {
   vectorDbTopK: number; // top K vectors to return from vector DB
 }
 
+import { parseNumClamped, parseIntClamped, parseBool, sanitizeModel } from '../utils/envParsers';
+
 const defaultConfig: OpenAIConfig = {
   model: "gpt-4o-mini",
   maxTokens: 1200,
@@ -31,35 +33,19 @@ const defaultConfig: OpenAIConfig = {
 };
 
 const envConfig: Partial<OpenAIConfig> = {
-  model: process.env.OPENAI_MODEL,
-  maxTokens: process.env.OPENAI_MAX_TOKENS ? Number(process.env.OPENAI_MAX_TOKENS) : undefined,
-  temperature: process.env.OPENAI_TEMPERATURE ? Number(process.env.OPENAI_TEMPERATURE) : undefined,
-  topP: process.env.OPENAI_TOP_P ? Number(process.env.OPENAI_TOP_P) : undefined,
-  n: process.env.OPENAI_N ? Number(process.env.OPENAI_N) : undefined,
-  frequencyPenalty: process.env.OPENAI_FREQUENCY_PENALTY
-    ? Number(process.env.OPENAI_FREQUENCY_PENALTY)
-    : undefined,
-  presencePenalty: process.env.OPENAI_PRESENCE_PENALTY
-    ? Number(process.env.OPENAI_PRESENCE_PENALTY)
-    : undefined,
-  fileContentSizeLimit: process.env.OPENAI_FILE_CONTENT_SIZE_LIMIT
-    ? Number(process.env.OPENAI_FILE_CONTENT_SIZE_LIMIT)
-    : undefined,
-  totalFilesLimit: process.env.OPENAI_TOTAL_FILES_LIMIT
-    ? Number(process.env.OPENAI_TOTAL_FILES_LIMIT)
-    : undefined,
-  bypassLargeFiles: process.env.OPENAI_BYPASS_LARGE_FILES
-    ? process.env.OPENAI_BYPASS_LARGE_FILES.toLowerCase() === "true"
-    : undefined,
-  enableCache: process.env.OPENAI_ENABLE_CACHE
-    ? process.env.OPENAI_ENABLE_CACHE.toLowerCase() === "true"
-    : undefined,
-  enableEmbeddings: process.env.OPENAI_ENABLE_EMBEDDINGS
-    ? process.env.OPENAI_ENABLE_EMBEDDINGS.toLowerCase() === "true"
-    : undefined,
-  vectorDbTopK: process.env.OPENAI_VECTOR_DB_TOP_K
-    ? Number(process.env.OPENAI_VECTOR_DB_TOP_K)
-    : undefined,
+  model: sanitizeModel(process.env.OPENAI_MODEL),
+  maxTokens: parseIntClamped(process.env.OPENAI_MAX_TOKENS, 1, 128_000),
+  temperature: parseNumClamped(process.env.OPENAI_TEMPERATURE, 0, 2),
+  topP: parseNumClamped(process.env.OPENAI_TOP_P, 0, 1),
+  n: parseIntClamped(process.env.OPENAI_N, 1, 10),
+  frequencyPenalty: parseNumClamped(process.env.OPENAI_FREQUENCY_PENALTY, -2, 2),
+  presencePenalty: parseNumClamped(process.env.OPENAI_PRESENCE_PENALTY, -2, 2),
+  fileContentSizeLimit: parseIntClamped(process.env.OPENAI_FILE_CONTENT_SIZE_LIMIT, 1, 128_000),
+  totalFilesLimit: parseIntClamped(process.env.OPENAI_TOTAL_FILES_LIMIT, 1, 100),
+  bypassLargeFiles: parseBool(process.env.OPENAI_BYPASS_LARGE_FILES),
+  enableCache: parseBool(process.env.OPENAI_ENABLE_CACHE),
+  enableEmbeddings: parseBool(process.env.OPENAI_ENABLE_EMBEDDINGS),
+  vectorDbTopK: parseIntClamped(process.env.OPENAI_VECTOR_DB_TOP_K, 1, 100),
 };
 
 export const openAIConfig = {

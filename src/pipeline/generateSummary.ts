@@ -13,7 +13,8 @@ const PASS_ICONS: Record<string, string> = {
  */
 export const generateSummary = (results: PassResult[]): string => {
   const sections = results.map((result) => {
-    const icon = PASS_ICONS[result.label] ?? '\u2022';
+    const pass_icons_default = '\u2022';
+    const icon = PASS_ICONS[result.label] ?? pass_icons_default;
     const header = `### ${icon} ${result.label}`;
     if (result.findings.length === 0) {
       return `${header}\n\nNo issues found.`;
