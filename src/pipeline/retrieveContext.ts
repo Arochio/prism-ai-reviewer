@@ -2,6 +2,7 @@
 import { openAIConfig } from '../config/openai.config';
 import { createEmbedding, querySimilar } from '../services/vectorService';
 import { retrieveFeedback } from '../services/feedbackService';
+import { logger } from '../services/logger';
 import type { ProcessedFile } from './extractDiff';
 
 const getErrorMessage = (error: unknown): string => {
@@ -44,9 +45,9 @@ export const retrieveContext = async (files: ProcessedFile[]): Promise<Processed
         // Append shared feedback context to each file's similar text.
         similarText += feedbackContext;
       } catch (err: unknown) {
-        console.error(`Context retrieval skipped for ${file.filename}`, {
+        logger.error({
           message: getErrorMessage(err),
-        });
+        }, `Context retrieval skipped for ${file.filename}`);
       }
       return { ...file, embedding, similarText };
     })

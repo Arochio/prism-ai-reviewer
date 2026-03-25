@@ -6,6 +6,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createEmbedding, storeEmbedding } from '../services/vectorService';
+import { logger } from '../services/logger';
 
 // Maximum content stored in Pinecone metadata per record (Pinecone 40KB limit).
 const MAX_CONTENT_CHARS = 2000;
@@ -62,10 +63,10 @@ const processBatch = async (
 };
 
 const main = async () => {
-  console.log('--- Prism AI Repo Ingestion ---');
+  logger.info('--- Prism AI Repo Ingestion ---');
 
   if (!process.env.OPENAI_API_KEY || !process.env.PINECONE_API_KEY || !process.env.PINECONE_INDEX_NAME) {
-    console.error('Missing required env vars: OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME');
+    logger.error('Missing required env vars: OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_INDEX_NAME');
     process.exit(1);
   }
 
@@ -76,11 +77,11 @@ const main = async () => {
     .filter((f) => f.length > 0)
     .filter((f) => !shouldSkip(f));
 
-  console.log(`Found ${tracked.length} indexable files`);
+  logger.info({ fileCount: tracked.length }, 'Found indexable files');
 
   if (isDryRun) {
-    tracked.forEach((f) => console.log(`  [dry-run] ${f}`));
-    console.log(`Dry run complete — ${tracked.length} files would be indexed.`);
+    tracked.forEach((f) => logger.info(`  [dry-run] ${f}`));
+    logger.info(`Dry run complete — ${tracked.length} files would be indexed.`);
     return;
   }
 
@@ -105,18 +106,18 @@ const main = async () => {
         source: 'ingestion',
       });
       indexed++;
-      console.log(`  [${indexed}] ${filePath}`);
+      logger.info(`  [${indexed}] ${filePath}`);
     } catch (err: unknown) {
       failed++;
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      console.error(`  [FAIL] ${filePath}: ${msg}`);
+      logger.error(`  [FAIL] ${filePath}: ${msg}`);
     }
   }, CONCURRENCY);
 
-  console.log(`\nDone: ${indexed} indexed, ${skipped} skipped, ${failed} failed`);
+  logger.info(`\nDone: ${indexed} indexed, ${skipped} skipped, ${failed} failed`);
 };
 
 main().catch((err) => {
-  console.error('Ingestion failed:', err);
+  logger.error({ err }, 'Ingestion failed');
   process.exit(1);
 });
