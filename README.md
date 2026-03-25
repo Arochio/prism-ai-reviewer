@@ -58,8 +58,9 @@ This project is built by a software engineering student exploring AI tools. It i
    OPENAI_TEMPERATURE=0.2
    OPENAI_BYPASS_LARGE_FILES=true
    OPENAI_ENABLE_CACHE=true
+   # Preferred Redis config (use this OR the host/port option below)
    REDIS_URL=redis://localhost:6379
-   # Alternative to REDIS_URL (object-style config)
+   # Alternative Redis config (used only when REDIS_URL is not set)
    REDIS_HOST=localhost
    REDIS_PORT=6379
    REDIS_USERNAME=default
@@ -103,7 +104,8 @@ This project is built by a software engineering student exploring AI tools. It i
 - **Environment Variables**: Ensure `.env` is not committed (it's already in `.gitignore`).
 - **Webhook Verification**: The app verifies webhook signatures for security.
 - **OpenAI Configuration**: Customize AI behavior via env vars (e.g., model selection, token limits, caching). Defaults are optimized for cost and performance.
-- **Redis Cache**: `OPENAI_ENABLE_CACHE=true` now uses Redis instead of in-memory cache. Configure with either `REDIS_URL` or (`REDIS_HOST` + `REDIS_PORT` with optional `REDIS_USERNAME`/`REDIS_PASSWORD`). `OPENAI_CACHE_TTL_SECONDS` defaults to 3600. If Redis is unavailable, caching is automatically disabled and analysis still runs.
+- **Redis Cache**: `OPENAI_ENABLE_CACHE=true` now uses Redis instead of in-memory cache. Configure with either `REDIS_URL` or (`REDIS_HOST` + `REDIS_PORT` with optional `REDIS_USERNAME`/`REDIS_PASSWORD`). If both are set, `REDIS_URL` takes precedence. `OPENAI_CACHE_TTL_SECONDS` defaults to 3600. If Redis is unavailable, caching is automatically disabled and analysis still runs.
+- **Redis Protocol**: Use `redis://` for non-TLS endpoints and `rediss://` for TLS endpoints. A mismatch will cause SSL errors such as `wrong version number`.
 - **Embeddings & Vector DB**: Set `OPENAI_ENABLE_EMBEDDINGS=true` to enable embedding generation and Pinecone storage. Each analyzed file's embedding is stored under the key `pr-{prNumber}-{filename}`. On subsequent PRs, similar files from past PRs are retrieved and included in the AI prompt. The `OPENAI_VECTOR_DB_TOP_K` variable controls how many similar results are returned (default: 5).
 
 ## Development
