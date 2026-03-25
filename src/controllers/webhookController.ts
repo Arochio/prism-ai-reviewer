@@ -178,6 +178,19 @@ const extractAnalysisHighlights = (analysis: string): string[] => {
     return [analysis.replace(/\s+/g, " ").slice(0, 220)];
 };
 
+// Formats a review highlight as a GitHub suggestion block.
+const formatInlineSuggestionBody = (highlight: string): string => {
+    const safeHighlight = highlight.replace(/```/g, "'''").trim();
+    return [
+        "AI suggestion:",
+        `> ${safeHighlight}`,
+        "",
+        "```suggestion",
+        `// ${safeHighlight}`,
+        "```",
+    ].join("\n");
+};
+
 // Maps analysis highlights to changed file locations and removes duplicate targets.
 const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     const highlights = extractAnalysisHighlights(analysis);
@@ -201,7 +214,7 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
         path: candidate.path,
         line: candidate.line,
         side: "RIGHT" as const,
-        body: `AI note: ${highlights[index % highlights.length]}`,
+        body: formatInlineSuggestionBody(highlights[index % highlights.length]),
     }));
 };
 
