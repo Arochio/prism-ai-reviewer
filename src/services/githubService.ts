@@ -13,18 +13,87 @@ interface GitHubChangedFile {
   content?: string | null;
 }
 
-const getAxiosErrorDetails = (error: unknown): { status?: number; data?: unknown; message: string } => {
+const getAxiosErrorDetails = (error: unknown): { status?: number; data?: unknown; message: string; headers?: Record<string, unknown> } => {
   if (axios.isAxiosError<GitHubApiErrorResponse>(error)) {
     return {
       status: error.response?.status,
       data: error.response?.data,
       message: error.message,
+      headers: (error.response?.headers as Record<string, unknown> | undefined),
     };
   }
   if (error instanceof Error) {
     return { message: error.message };
   }
   return { message: "Unknown error" };
+};
+
+const GITHUB_RATE_LIMIT_MAX_RETRIES = 2;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getHeaderValue = (headers: Record<string, unknown> | undefined, key: string): string | undefined => {
+  if (!headers) return undefined;
+  const value = headers[key] ?? headers[key.toLowerCase()] ?? headers[key.toUpperCase()];
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  return undefined;
+};
+
+const isGitHubRateLimitError = (status?: number, headers?: Record<string, unknown>): boolean => {
+  if (status === 429) return true;
+  if (status === 403) {
+    const remaining = getHeaderValue(headers, "x-ratelimit-remaining");
+    return remaining === "0";
+  }
+  return false;
+};
+
+const getRateLimitDelayMs = (headers?: Record<string, unknown>, fallbackMs = 3000): number => {
+  const retryAfter = getHeaderValue(headers, "retry-after");
+  const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.max(1000, retryAfterSeconds * 1000);
+  }
+
+  const reset = getHeaderValue(headers, "x-ratelimit-reset");
+  const resetSeconds = reset ? Number(reset) : NaN;
+  if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
+    const delay = resetSeconds * 1000 - Date.now() + 1000;
+    return Math.max(1000, delay);
+  }
+
+  return fallbackMs;
+};
+
+const withGitHubRateLimitRetry = async <T>(
+  operation: () => Promise<T>,
+  label: string,
+  maxRetries = GITHUB_RATE_LIMIT_MAX_RETRIES
+): Promise<T> => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error: unknown) {
+      const { status, headers, message } = getAxiosErrorDetails(error);
+      const isRateLimited = isGitHubRateLimitError(status, headers);
+
+      if (!isRateLimited || attempt >= maxRetries) {
+        throw error;
+      }
+
+      const delayMs = getRateLimitDelayMs(headers, 3000 * (attempt + 1));
+      console.warn("GitHub API rate limit hit; retrying request", {
+        label,
+        status,
+        attempt: attempt + 1,
+        maxRetries,
+        delayMs,
+        message,
+      });
+      await sleep(delayMs);
+    }
+  }
 };
 
 // JWT is valid for 10 minutes; cache it for 9 to allow a safety margin
@@ -81,15 +150,18 @@ const getInstallationToken = async (installationId: number) => {
   const jwtToken = generateJWT();
 
   try {
-    const response = await axios.post(
-      `https://api.github.com/app/installations/${installationId}/access_tokens`,
-      {},
-      {
-        headers: {
-          Authorization: `Bearer ${jwtToken}`,
-          Accept: "application/vnd.github+json",
-        },
-      }
+    const response = await withGitHubRateLimitRetry(
+      () => axios.post(
+        `https://api.github.com/app/installations/${installationId}/access_tokens`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            Accept: "application/vnd.github+json",
+          },
+        }
+      ),
+      "getInstallationToken"
     );
 
     const token = response.data.token;
@@ -99,7 +171,6 @@ const getInstallationToken = async (installationId: number) => {
   } catch (err: unknown) {
     const { status, data } = getAxiosErrorDetails(err);
     console.error("Failed to get installation token", {
-      installationId,
       status,
       data,
     });
@@ -128,11 +199,14 @@ export const fetchPRDetails = async (
     AxiosResponse,
     AxiosResponse<GitHubChangedFile[]>,
     AxiosResponse
-  ]> => Promise.all([
-    axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: hdrs }),
-    axios.get<GitHubChangedFile[]>(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`, { headers: hdrs }),
-    axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { headers: hdrs }),
-  ]);
+  ]> => withGitHubRateLimitRetry(
+    () => Promise.all([
+      axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: hdrs }),
+      axios.get<GitHubChangedFile[]>(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`, { headers: hdrs }),
+      axios.get(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { headers: hdrs }),
+    ]),
+    `fetchPRDetails:${owner}/${repo}#${prNumber}`
+  );
 
   let prResponse, filesResponse, reviewsResponse;
   try {
@@ -141,7 +215,7 @@ export const fetchPRDetails = async (
     const { status, data } = getAxiosErrorDetails(err);
     // If the cached token was revoked (401), evict it and retry once with a fresh token
     if (status === 401) {
-      console.warn("GitHub returned 401 — evicting cached token and retrying", { installationId });
+      console.warn("GitHub returned 401 — evicting cached token and retrying");
       installationTokenCache.delete(installationId);
       const freshToken = await getInstallationToken(installationId);
       const retryHeaders = { ...headers, Authorization: `Bearer ${freshToken}` };
@@ -175,7 +249,10 @@ export const fetchPRDetails = async (
       .map(async (f) => {
         if (!f.raw_url) return { ...f, content: null };
         try {
-          const r = await axios.get<string>(f.raw_url, { headers });
+          const r = await withGitHubRateLimitRetry(
+            () => axios.get<string>(f.raw_url!, { headers }),
+            `fetchFileContent:${owner}/${repo}:${f.filename}`
+          );
           return { ...f, content: r.data };
         } catch (err: unknown) {
           const details = getAxiosErrorDetails(err);
@@ -200,15 +277,18 @@ const GITHUB_COMMENT_MAX_LENGTH = 65_536;
 const TRUNCATION_NOTICE = "\n\n---\n> ⚠️ *Review truncated — exceeded GitHub's comment length limit.*";
 
 const postComment = async (token: string, owner: string, repo: string, prNumber: number, body: string) => {
-  await axios.post(
-    `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
-    { body },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-      },
-    }
+  await withGitHubRateLimitRetry(
+    () => axios.post(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+      { body },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    ),
+    `postPullRequestComment:${owner}/${repo}#${prNumber}`
   );
 };
 
@@ -252,7 +332,7 @@ export const postPullRequestComment = async (
       }
     } else {
       console.error("Failed to post PR comment", {
-        owner, repo, prNumber, installationId,
+        owner, repo, prNumber,
         status,
         data,
       });

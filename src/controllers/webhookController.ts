@@ -86,7 +86,11 @@ export const handleWebhook = (req: Request, res: Response) => {
     if (action === "opened" || action === "synchronize") {
         const installationId = payload.installation?.id;
         if (!installationId) {
-            console.error("Missing installation.id in webhook payload", { body: payload });
+            console.error("Missing installation.id in webhook payload", {
+                action: payload.action,
+                repo: payload.repository?.full_name,
+                prNumber: payload.pull_request?.number,
+            });
             return res.status(400).send("Missing installation.id");
         }
 
