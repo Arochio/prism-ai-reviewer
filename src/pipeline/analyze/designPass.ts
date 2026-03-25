@@ -8,6 +8,8 @@ const DESIGN_PASS_SYSTEM_PROMPT =
   '- Naming: unclear variable, function, or class names that reduce readability\n' +
   '- Structure: files or functions that are too large or carry too many responsibilities\n' +
   '- API design: inconsistent interfaces, leaky abstractions, poor separation of concerns\n\n' +
+  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
+  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +
   'For each finding output exactly one bullet:\n' +
   '`- [<severity>] <filename>: <concise description>`\n' +
   'Severity must be one of: High, Medium, Low.\n' +
