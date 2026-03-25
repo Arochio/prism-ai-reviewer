@@ -20,13 +20,14 @@ export const parseIntClamped = (raw: string | undefined, min: number, max: numbe
   return Math.min(max, Math.max(min, n));
 };
 
-// Parses a boolean env var, accepting "true"/"false" (case-insensitive).
+// Parses a boolean env var, accepting only "true"/"false" (case-insensitive).
+// Throws for any other non-empty value to avoid silent misconfiguration.
 export const parseBool = (raw: string | undefined): boolean | undefined => {
   if (!raw) return undefined;
   const v = raw.trim().toLowerCase();
   if (v === 'true') return true;
   if (v === 'false') return false;
-  return undefined;
+  throw new Error(`Invalid boolean value: "${raw}". Expected "true" or "false".`);
 };
 
 // Sanitises a model string: trims whitespace and strips characters outside the

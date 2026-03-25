@@ -10,6 +10,7 @@ import { runPerformancePass } from '../pipeline/analyze/performancePass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { logger } from './logger';
+import { retryWithBackoff } from '../utils/retry';
 
 // Converts unknown errors into a stable log message.
 const getErrorMessage = (error: unknown): string => {
@@ -36,27 +37,32 @@ const buildCacheKey = (files: ProcessedFile[]): string => {
 export const callOpenAI = async (systemPrompt: string, userContent: string): Promise<string> => {
   let response;
   try {
-    response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: openAIConfig.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        max_tokens: openAIConfig.maxTokens,
-        temperature: openAIConfig.temperature,
-        top_p: openAIConfig.topP,
-        n: openAIConfig.n,
-        frequency_penalty: openAIConfig.frequencyPenalty,
-        presence_penalty: openAIConfig.presencePenalty,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
+    response = await retryWithBackoff(
+      () => axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: openAIConfig.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+          max_tokens: openAIConfig.maxTokens,
+          temperature: openAIConfig.temperature,
+          top_p: openAIConfig.topP,
+          n: openAIConfig.n,
+          frequency_penalty: openAIConfig.frequencyPenalty,
+          presence_penalty: openAIConfig.presencePenalty,
         },
-      }
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+        }
+      ),
+      3,
+      1000,
+      "openai.chat.completions"
     );
   } catch (err: unknown) {
     const status = axios.isAxiosError(err) ? err.response?.status : undefined;
@@ -66,7 +72,7 @@ export const callOpenAI = async (systemPrompt: string, userContent: string): Pro
       data,
       message: getErrorMessage(err),
     }, "OpenAI API request failed");
-    throw err;
+    throw new Error(`OpenAI API request failed${status ? ` (status ${status})` : ""}`);
   }
 
   const result: string = response.data.choices?.[0]?.message?.content;
