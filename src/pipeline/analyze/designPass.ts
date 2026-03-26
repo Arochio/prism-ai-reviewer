@@ -25,8 +25,7 @@ const DESIGN_PASS_SYSTEM_PROMPT =
   'DIFF PRECISION:\n' +
   '- Each file includes a unified diff showing exactly which lines were added (+) or removed (-), plus line-numbered full source.\n' +
   '- Focus your review on the changed lines (lines with + in the diff). Only flag unchanged code if changes introduce a new design concern.\n' +
-  '- Reference line numbers from the line-numbered source (e.g. L42). Use the diff to identify what changed and the full source for surrounding context.\n\n' +
-  'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
+  '- Reference line numbers from the line-numbered source (e.g. L42). Use the diff to identify what changed and the full source for surrounding context.\n\n' +  'If a <risk_signals> section is present, increase your scrutiny on the flagged files and areas. Risk signals come from git history analysis.\n' +  'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
   'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
   '`- [<severity>] <filename>:L<line_number>: <description>. Problematic code: \`<exact snippet>\``\n' +

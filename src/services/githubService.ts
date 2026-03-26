@@ -708,3 +708,54 @@ export const fetchRepoRules = async (
     return '';
   }
 };
+
+// Fetches recent commit activity for specific file paths.
+// Returns an array of { path, commitCount, lastCommitDate } over the trailing 90-day window.
+export interface FileCommitStats {
+  path: string;
+  commitCount: number;
+  authors: string[];
+  lastCommitDate: string | null;
+}
+
+export const fetchFileCommitStats = async (
+  owner: string,
+  repo: string,
+  filePaths: string[],
+  installationId: number
+): Promise<FileCommitStats[]> => {
+  const token = await getInstallationToken(installationId);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+  return Promise.all(
+    filePaths.map(async (filePath): Promise<FileCommitStats> => {
+      try {
+        const response = await withGitHubRateLimitRetry(
+          () => axios.get<Array<{ commit: { author: { name: string; date: string } } }>>(
+            `https://api.github.com/repos/${owner}/${repo}/commits`,
+            {
+              headers,
+              params: { path: filePath, since, per_page: 100 },
+            }
+          ),
+          `fetchFileCommits:${owner}/${repo}:${filePath}`
+        );
+        const commits = Array.isArray(response.data) ? response.data : [];
+        const authors = [...new Set(
+          commits
+            .map((c) => c.commit?.author?.name)
+            .filter((n): n is string => typeof n === 'string')
+        )];
+        const lastDate = commits[0]?.commit?.author?.date ?? null;
+        return { path: filePath, commitCount: commits.length, authors, lastCommitDate: lastDate };
+      } catch {
+        return { path: filePath, commitCount: 0, authors: [], lastCommitDate: null };
+      }
+    })
+  );
+};

@@ -12,6 +12,7 @@ import { runValidationPass } from '../pipeline/analyze/validationPass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
+import { assessPRRisk } from './riskService';
 import { logger } from './logger';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -98,19 +99,33 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Fetches full repository context (file tree + related file contents + custom rules).
   const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
 
+  // Computes PR risk score from git history — runs in parallel with nothing, but
+  // logically happens after we know which files are in the PR.
+  const riskAssessment = await assessPRRisk(
+    repoInfo.owner, repoInfo.repo,
+    enrichedFiles.map((f) => f.filename),
+    repoInfo.installationId
+  );
+
+  // Inject risk signals into the context so analysis passes are more thorough in risky areas.
+  const riskContext = riskAssessment.signals.length > 0
+    ? `\n\n<risk_signals>\nThe following risk signals were detected from git history analysis. Use these to calibrate your review intensity — pay extra attention to the areas highlighted below.\n\n${riskAssessment.signals.map((s) => `- ${s}`).join('\n')}\n</risk_signals>`
+    : '';
+  const augmentedRepoContext = repoContext + riskContext;
+
   // Runs analysis passes sequentially to stay within TPM rate limits.
-  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, repoContext, customRules);
-  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, repoContext, customRules);
-  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules);
+  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
+  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
+  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
 
   // Validates findings to filter false positives, duplicates, and speculative issues.
   const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
     bugRaw, designRaw, performanceRaw,
-    enrichedFiles, repoContext, customRules, callOpenAI
+    enrichedFiles, augmentedRepoContext, customRules, callOpenAI
   );
 
   const ranked = rankFindings(bugValidated, designValidated, performanceValidated);
-  const summary = generateSummary(ranked);
+  const summary = generateSummary(ranked, riskAssessment.recommendations);
 
   if (openAIConfig.enableCache) {
     // Persists successful responses for subsequent identical requests.
