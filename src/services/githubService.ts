@@ -616,3 +616,42 @@ export const fetchRepoFileContents = async (
     })
   );
 };
+
+// Fetches the .prism-rules file from the repo root, if it exists.
+// Returns the file content as a string, or an empty string if not found.
+export const fetchRepoRules = async (
+  owner: string,
+  repo: string,
+  ref: string,
+  installationId: number
+): Promise<string> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<string>(
+        `https://api.github.com/repos/${owner}/${repo}/contents/.prism-rules?ref=${ref}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github.v3.raw",
+          },
+          responseType: 'text',
+        }
+      ),
+      `fetchRepoRules:${owner}/${repo}`
+    );
+    const content = typeof response.data === 'string' ? response.data.trim() : '';
+    if (content) {
+      logger.info({ owner, repo }, "Loaded .prism-rules from repository");
+    }
+    return content;
+  } catch (err: unknown) {
+    const { status } = getAxiosErrorDetails(err);
+    // 404 is expected when the file doesn't exist — not an error.
+    if (status !== 404) {
+      const { message } = getAxiosErrorDetails(err);
+      logger.error({ owner, repo, status, message }, "Failed to fetch .prism-rules");
+    }
+    return '';
+  }
+};

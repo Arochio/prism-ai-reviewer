@@ -1,7 +1,7 @@
 // Builds repository-wide context for analysis passes by fetching the file tree
 // and the content of files most relevant to the changed set.
 import { openAIConfig } from '../config/openai.config';
-import { fetchRepoTree, fetchRepoFileContents, type GitHubTreeEntry } from '../services/githubService';
+import { fetchRepoTree, fetchRepoFileContents, fetchRepoRules, type GitHubTreeEntry } from '../services/githubService';
 import { logger } from '../services/logger';
 import type { ProcessedFile } from './extractDiff';
 
@@ -10,6 +10,11 @@ export interface RepoInfo {
   repo: string;
   headSha: string;
   installationId: number;
+}
+
+export interface RepoContextResult {
+  repoContext: string;
+  customRules: string;
 }
 
 // Extensions considered source code for context fetching.
@@ -84,17 +89,32 @@ const formatTreeListing = (entries: GitHubTreeEntry[]): string => {
 /*
  * Fetches the repo tree and content of the most relevant source files,
  * returning a context block ready for injection into analysis prompts.
+ * Also fetches .prism-rules and combines with global rules.
  */
 export const fetchRepoContext = async (
   repoInfo: RepoInfo,
   changedFiles: ProcessedFile[]
-): Promise<string> => {
+): Promise<RepoContextResult> => {
   const { owner, repo, headSha, installationId } = repoInfo;
 
-  const tree = await fetchRepoTree(owner, repo, headSha, installationId);
+  // Fetch tree and .prism-rules in parallel.
+  const [tree, repoRules] = await Promise.all([
+    fetchRepoTree(owner, repo, headSha, installationId),
+    fetchRepoRules(owner, repo, headSha, installationId),
+  ]);
+
+  // Assemble custom rules from global env + per-repo .prism-rules file.
+  const globalRules = (process.env.PRISM_GLOBAL_RULES || '').trim();
+  const rulesSections: string[] = [];
+  if (globalRules) rulesSections.push(globalRules);
+  if (repoRules) rulesSections.push(repoRules);
+  const customRules = rulesSections.length > 0
+    ? `\n\n<custom_review_rules>\nThe following are mandatory review rules defined by the project maintainers. You MUST follow these rules and they override any default behavior.\n\n${rulesSections.join('\n\n')}\n</custom_review_rules>`
+    : '';
+
   if (tree.length === 0) {
     logger.warn({ owner, repo }, "Empty repo tree — skipping repo context");
-    return '';
+    return { repoContext: '', customRules };
   }
 
   const treeListing = formatTreeListing(tree);
@@ -134,5 +154,5 @@ export const fetchRepoContext = async (
     }
   }
 
-  return `<repo_file_tree>\n${treeListing}\n</repo_file_tree>${repoFilesContext}`;
+  return { repoContext: `<repo_file_tree>\n${treeListing}\n</repo_file_tree>${repoFilesContext}`, customRules };
 };

@@ -107,14 +107,14 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     ? await retrieveContext(processedFiles)
     : processedFiles;
 
-  // Fetches full repository context (file tree + related file contents).
-  const repoContext = await fetchRepoContext(repoInfo, enrichedFiles);
+  // Fetches full repository context (file tree + related file contents + custom rules).
+  const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
 
   // Runs all three analysis passes in parallel to reduce total latency.
   const [bugRaw, designRaw, performanceRaw] = await Promise.all([
-    runBugPass(enrichedFiles, callOpenAI, repoContext),
-    runDesignPass(enrichedFiles, callOpenAI, repoContext),
-    runPerformancePass(enrichedFiles, callOpenAI, repoContext),
+    runBugPass(enrichedFiles, callOpenAI, repoContext, customRules),
+    runDesignPass(enrichedFiles, callOpenAI, repoContext, customRules),
+    runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules),
   ]);
 
   const ranked = rankFindings(bugRaw, designRaw, performanceRaw);

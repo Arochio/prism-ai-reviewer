@@ -5,23 +5,29 @@ const BUG_PASS_SYSTEM_PROMPT =
   'You are a security-focused code reviewer. You are given the full repository file tree, related source files for context, and the specific files that were changed in a pull request. ' +
   'Analyze the changed files in the context of the full repository for bugs, security vulnerabilities, and correctness issues.\n\n' +
   'Use the repository context to understand how the changed code interacts with the rest of the codebase — check for mismatched interfaces, incorrect assumptions about callers or dependencies, and cross-file issues.\n\n' +
+  'SCOPE: Only report bugs, security vulnerabilities, and correctness issues. Do NOT report design, naming, architecture, or performance concerns — those are handled by separate passes.\n\n' +
   'Cover:\n' +
   '- Security: injection flaws, authentication/authorisation bypasses, exposed secrets, OWASP Top 10 issues\n' +
   '- Correctness: logic errors, off-by-one errors, null/undefined dereferences, incorrect assumptions about other parts of the codebase\n' +
   '- Error handling: unhandled exceptions, swallowed errors, missing input validation\n' +
   '- Integration: breaking changes to shared interfaces, incorrect usage of APIs defined elsewhere in the repo\n\n' +
-  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
-  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +
+  'RULES:\n' +
+  '- Every finding MUST cite a specific code pattern, line, or expression from the provided files. Do not report vague or generic advice.\n' +
+  '- If the code already handles a concern (e.g. has error handling, validation, guards, or fallbacks), do NOT flag it.\n' +
+  '- Only report issues that would cause a bug, crash, security breach, or data loss. Do not flag stylistic preferences or hypothetical scenarios.\n' +
+  '- Prefer fewer, high-confidence findings over many speculative ones. When in doubt, do not report.\n\n' +
+  'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
+  'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>: <concise description>`\n' +
+  '`- [<severity>] <filename>:<line or function>: <concise description citing the specific code pattern>`\n' +
   'Severity must be one of: Critical, High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No bug findings.';
 
-const buildUserContent = (files: ProcessedFile[], repoContext: string): string => {
+const buildUserContent = (files: ProcessedFile[], repoContext: string, customRules: string): string => {
   const changedSection = files
     .map((f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}${f.similarText}`)
     .join('\n\n');
-  return `${repoContext}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
+  return `${repoContext}${customRules}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
 };
 
 /*
@@ -30,7 +36,8 @@ const buildUserContent = (files: ProcessedFile[], repoContext: string): string =
 export const runBugPass = async (
   files: ProcessedFile[],
   callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>,
-  repoContext: string
+  repoContext: string,
+  customRules: string
 ): Promise<string> => {
-  return callOpenAI(BUG_PASS_SYSTEM_PROMPT, buildUserContent(files, repoContext));
+  return callOpenAI(BUG_PASS_SYSTEM_PROMPT, buildUserContent(files, repoContext, customRules));
 };
