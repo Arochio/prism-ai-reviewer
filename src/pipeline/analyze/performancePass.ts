@@ -2,28 +2,36 @@
 import type { ProcessedFile } from '../extractDiff';
 
 const PERFORMANCE_PASS_SYSTEM_PROMPT =
-  'You are a performance engineering expert. Analyze the provided file diffs exclusively for performance and efficiency issues.\n\n' +
+  'You are a performance engineering expert. You are given the full repository file tree, related source files for context, and the specific files that were changed in a pull request. ' +
+  'Analyze the changed files in the context of the full repository for performance and efficiency issues.\n\n' +
+  'Use the repository context to identify cross-file performance concerns — for example, if a changed function is called in a hot loop elsewhere in the codebase, or if new code duplicates work already done by an existing utility.\n\n' +
   'Cover:\n' +
   '- Algorithmic complexity: O(n\u00b2) or worse loops, redundant iterations, inefficient data structures\n' +
   '- I/O and concurrency: sequential awaits that could be parallelised, blocking synchronous calls in async paths\n' +
   '- Memory: large allocations inside loops, unbounded caches, object churn\n' +
-  '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n\n' +  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
-  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +  'For each finding output exactly one bullet:\n' +
+  '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n' +
+  '- Duplication: re-implementing logic that already exists in the repo\n\n' +
+  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
+  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +
+  'For each finding output exactly one bullet:\n' +
   '`- [<severity>] <filename>: <concise description>`\n' +
   'Severity must be one of: High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No performance findings.';
 
-const buildUserContent = (files: ProcessedFile[]): string =>
-  files
+const buildUserContent = (files: ProcessedFile[], repoContext: string): string => {
+  const changedSection = files
     .map((f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}${f.similarText}`)
     .join('\n\n');
+  return `${repoContext}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
+};
 
 /*
  * Runs the performance analysis pass against the provided processed files.
  */
 export const runPerformancePass = async (
   files: ProcessedFile[],
-  callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>
+  callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>,
+  repoContext: string
 ): Promise<string> => {
-  return callOpenAI(PERFORMANCE_PASS_SYSTEM_PROMPT, buildUserContent(files));
+  return callOpenAI(PERFORMANCE_PASS_SYSTEM_PROMPT, buildUserContent(files, repoContext));
 };

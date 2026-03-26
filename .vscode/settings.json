@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^\\$srcTs = \\(Get-ChildItem -Path src -Recurse -File -Include \\*\\.ts,\\*\\.mts \\| ForEach-Object \\{ \\(Get-Content \\$_\\.FullName \\| Measure-Object -Line\\)\\.Lines \\} \\| Measure-Object -Sum\\)\\.Sum; \\$tracked = \\(git ls-files \\| ForEach-Object \\{ if \\(Test-Path \\$_\\) \\{ \\(Get-Content \\$_ \\| Measure-Object -Line\\)\\.Lines \\} \\} \\| Measure-Object -Sum\\)\\.Sum; Write-Output \"SRC_TS_LINES=\\$srcTs\"; Write-Output \"TRACKED_LINES=\\$tracked\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

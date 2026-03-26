@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
+import type { RepoInfo } from "../pipeline/fetchRepoContext";
 import { retryWithBackoff } from "../utils/retry";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
 import { logger } from "../services/logger";
@@ -254,9 +255,16 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
 
     logger.info({ fileCount: files.length, prNumber: prDataPayload.number }, "Fetched files for PR analysis");
 
+    const repoInfo: RepoInfo = {
+        owner: repoData.owner.login,
+        repo: repoData.name,
+        headSha: prData.head.sha,
+        installationId,
+    };
+
     let analysis: string;
     try {
-        analysis = await analyzeFiles(files, prDataPayload.number);
+        analysis = await analyzeFiles(files, prDataPayload.number, repoInfo);
     } catch (err: unknown) {
         logger.error({
             prNumber: prDataPayload.number,

@@ -12,6 +12,8 @@ export interface OpenAIConfig {
   enableCache: boolean; // caches OpenAI responses for identical file sets
   enableEmbeddings: boolean; // enables embedding generation
   vectorDbTopK: number; // top K vectors to return from vector DB
+  repoContextFileLimit: number; // max related repo files to fetch for context
+  repoContextSizeLimit: number; // max total chars of repo context sent to model
 }
 
 import { parseNumClamped, parseIntClamped, parseBool, sanitizeModel } from '../utils/envParsers';
@@ -30,6 +32,8 @@ const defaultConfig: OpenAIConfig = {
   enableCache: true,
   enableEmbeddings: true,
   vectorDbTopK: 5,
+  repoContextFileLimit: 15,
+  repoContextSizeLimit: 32_000,
 };
 
 const envConfig: Partial<OpenAIConfig> = {
@@ -46,6 +50,8 @@ const envConfig: Partial<OpenAIConfig> = {
   enableCache: parseBool(process.env.OPENAI_ENABLE_CACHE),
   enableEmbeddings: parseBool(process.env.OPENAI_ENABLE_EMBEDDINGS),
   vectorDbTopK: parseIntClamped(process.env.OPENAI_VECTOR_DB_TOP_K, 1, 100),
+  repoContextFileLimit: parseIntClamped(process.env.REPO_CONTEXT_FILE_LIMIT, 1, 50),
+  repoContextSizeLimit: parseIntClamped(process.env.REPO_CONTEXT_SIZE_LIMIT, 1, 128_000),
 };
 
 export const openAIConfig = {
