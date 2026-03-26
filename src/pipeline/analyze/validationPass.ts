@@ -27,7 +27,12 @@ const buildValidationContent = (
   customRules: string
 ): string => {
   const codeSection = files
-    .map((f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}`)
+    .map((f) => {
+      const diffBlock = f.patch
+        ? `\nUnified Diff:\n\`\`\`diff\n${f.patch}\n\`\`\`\n`
+        : '';
+      return `---\nFilename: ${f.filename}\nStatus: ${f.status}\n${diffBlock}\nFull source (line-numbered):\n${f.content}`;
+    })
     .join('\n\n');
   return `${repoContext}${customRules}\n\n<source_code>\n${codeSection}\n</source_code>\n\n<findings_to_validate>\n${findings}\n</findings_to_validate>`;
 };

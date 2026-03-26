@@ -388,6 +388,59 @@ const postComment = async (token: string, owner: string, repo: string, prNumber:
   );
 };
 
+// Creates a PR comment and returns its ID so it can be updated later.
+export const createPRComment = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  body: string,
+  installationId: number
+): Promise<number> => {
+  const token = await getInstallationToken(installationId);
+  const response = await withGitHubRateLimitRetry(
+    () => axios.post<{ id: number }>(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+      { body },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    ),
+    `createPRComment:${owner}/${repo}#${prNumber}`
+  );
+  return response.data.id;
+};
+
+// Updates an existing PR issue comment by ID.
+export const updatePRComment = async (
+  owner: string,
+  repo: string,
+  commentId: number,
+  body: string,
+  installationId: number
+): Promise<void> => {
+  const token = await getInstallationToken(installationId);
+
+  const maxContentLength = GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length;
+  const safeBody = truncateAtLineBoundary(body, maxContentLength);
+
+  await withGitHubRateLimitRetry(
+    () => axios.patch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+      { body: safeBody },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    ),
+    `updatePRComment:${owner}/${repo}:${commentId}`
+  );
+};
+
 // Posts the top-level PR review summary comment with length safeguards.
 export const postPullRequestComment = async (
   owner: string,
@@ -654,4 +707,55 @@ export const fetchRepoRules = async (
     }
     return '';
   }
+};
+
+// Fetches recent commit activity for specific file paths.
+// Returns an array of { path, commitCount, lastCommitDate } over the trailing 90-day window.
+export interface FileCommitStats {
+  path: string;
+  commitCount: number;
+  authors: string[];
+  lastCommitDate: string | null;
+}
+
+export const fetchFileCommitStats = async (
+  owner: string,
+  repo: string,
+  filePaths: string[],
+  installationId: number
+): Promise<FileCommitStats[]> => {
+  const token = await getInstallationToken(installationId);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+  return Promise.all(
+    filePaths.map(async (filePath): Promise<FileCommitStats> => {
+      try {
+        const response = await withGitHubRateLimitRetry(
+          () => axios.get<Array<{ commit: { author: { name: string; date: string } } }>>(
+            `https://api.github.com/repos/${owner}/${repo}/commits`,
+            {
+              headers,
+              params: { path: filePath, since, per_page: 100 },
+            }
+          ),
+          `fetchFileCommits:${owner}/${repo}:${filePath}`
+        );
+        const commits = Array.isArray(response.data) ? response.data : [];
+        const authors = [...new Set(
+          commits
+            .map((c) => c.commit?.author?.name)
+            .filter((n): n is string => typeof n === 'string')
+        )];
+        const lastDate = commits[0]?.commit?.author?.date ?? null;
+        return { path: filePath, commitCount: commits.length, authors, lastCommitDate: lastDate };
+      } catch {
+        return { path: filePath, commitCount: 0, authors: [], lastCommitDate: null };
+      }
+    })
+  );
 };

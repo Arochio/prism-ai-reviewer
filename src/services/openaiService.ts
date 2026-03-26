@@ -1,4 +1,5 @@
-import axios from "axios";
+import OpenAI from 'openai';
+import crypto from 'crypto';
 import { openAIConfig } from "../config/openai.config";
 import { storeEmbedding } from './vectorService';
 import { getCachedOpenAIResponse, setCachedOpenAIResponse } from "./cacheService";
@@ -11,8 +12,10 @@ import { runValidationPass } from '../pipeline/analyze/validationPass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
+import { assessPRRisk } from './riskService';
 import { logger } from './logger';
-import { retryWithBackoff } from '../utils/retry';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Converts unknown errors into a stable log message.
 const getErrorMessage = (error: unknown): string => {
@@ -20,66 +23,51 @@ const getErrorMessage = (error: unknown): string => {
   return "Unknown error";
 };
 
-// Builds a deterministic cache key from model settings and truncated file content.
+// Builds a deterministic cache key by hashing model settings and full file content.
 const buildCacheKey = (files: ProcessedFile[]): string => {
-  const fileKey = files
-    .map((file) => `${file.filename}:${file.content.slice(0, 128)}`)
-    .join("|");
-  return [
-    openAIConfig.model,
-    openAIConfig.maxTokens,
-    openAIConfig.temperature,
-    openAIConfig.fileContentSizeLimit,
-    openAIConfig.totalFilesLimit,
-    fileKey,
-  ].join("::");
+  const hash = crypto.createHash('sha256');
+  hash.update(openAIConfig.model);
+  hash.update(String(openAIConfig.maxTokens));
+  hash.update(String(openAIConfig.temperature));
+  hash.update(String(openAIConfig.fileContentSizeLimit));
+  hash.update(String(openAIConfig.totalFilesLimit));
+  for (const file of files) {
+    hash.update(file.filename);
+    hash.update(file.content);
+  }
+  return hash.digest('hex');
 };
 
 // Sends a single chat completion request to the OpenAI API using shared config.
+// The OpenAI SDK handles retries (2 by default) and rate-limit backoff automatically.
 export const callOpenAI = async (systemPrompt: string, userContent: string): Promise<string> => {
-  let response;
+  let result: string | null;
   try {
-    response = await retryWithBackoff(
-      () => axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: openAIConfig.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContent },
-          ],
-          max_tokens: openAIConfig.maxTokens,
-          temperature: openAIConfig.temperature,
-          top_p: openAIConfig.topP,
-          n: openAIConfig.n,
-          frequency_penalty: openAIConfig.frequencyPenalty,
-          presence_penalty: openAIConfig.presencePenalty,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      ),
-      3,
-      1000,
-      "openai.chat.completions"
-    );
+    const completion = await openai.chat.completions.create({
+      model: openAIConfig.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: openAIConfig.maxTokens,
+      temperature: openAIConfig.temperature,
+      top_p: openAIConfig.topP,
+      n: openAIConfig.n,
+      frequency_penalty: openAIConfig.frequencyPenalty,
+      presence_penalty: openAIConfig.presencePenalty,
+    });
+    result = completion.choices?.[0]?.message?.content;
   } catch (err: unknown) {
-    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-    const data = axios.isAxiosError(err) ? err.response?.data : undefined;
+    const status = err instanceof OpenAI.APIError ? err.status : undefined;
     logger.error({
       status,
-      data,
       message: getErrorMessage(err),
     }, "OpenAI API request failed");
     throw new Error(`OpenAI API request failed${status ? ` (status ${status})` : ""}`);
   }
 
-  const result: string = response.data.choices?.[0]?.message?.content;
   if (!result) {
-    logger.error({ data: response.data }, "OpenAI returned an empty or unexpected response");
+    logger.error("OpenAI returned an empty or unexpected response");
     throw new Error("OpenAI returned no content in response");
   }
 
@@ -111,19 +99,33 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Fetches full repository context (file tree + related file contents + custom rules).
   const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
 
+  // Computes PR risk score from git history — runs in parallel with nothing, but
+  // logically happens after we know which files are in the PR.
+  const riskAssessment = await assessPRRisk(
+    repoInfo.owner, repoInfo.repo,
+    enrichedFiles.map((f) => f.filename),
+    repoInfo.installationId
+  );
+
+  // Inject risk signals into the context so analysis passes are more thorough in risky areas.
+  const riskContext = riskAssessment.signals.length > 0
+    ? `\n\n<risk_signals>\nThe following risk signals were detected from git history analysis. Use these to calibrate your review intensity — pay extra attention to the areas highlighted below.\n\n${riskAssessment.signals.map((s) => `- ${s}`).join('\n')}\n</risk_signals>`
+    : '';
+  const augmentedRepoContext = repoContext + riskContext;
+
   // Runs analysis passes sequentially to stay within TPM rate limits.
-  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, repoContext, customRules);
-  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, repoContext, customRules);
-  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules);
+  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
+  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
+  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
 
   // Validates findings to filter false positives, duplicates, and speculative issues.
   const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
     bugRaw, designRaw, performanceRaw,
-    enrichedFiles, repoContext, customRules, callOpenAI
+    enrichedFiles, augmentedRepoContext, customRules, callOpenAI
   );
 
   const ranked = rankFindings(bugValidated, designValidated, performanceValidated);
-  const summary = generateSummary(ranked);
+  const summary = generateSummary(ranked, riskAssessment.recommendations);
 
   if (openAIConfig.enableCache) {
     // Persists successful responses for subsequent identical requests.

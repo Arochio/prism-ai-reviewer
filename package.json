@@ -8,6 +8,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "ingest": "ts-node src/scripts/ingestRepo.ts",
+    "dry-run": "ts-node src/scripts/dryRun.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src/"
   },
   "repository": {
@@ -46,6 +50,7 @@
     "jiti": "^2.6.1",
     "prettier": "^3.8.1",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.2"
   }
 }

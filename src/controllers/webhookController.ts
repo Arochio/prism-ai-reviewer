@@ -1,10 +1,10 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
+import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments, createPRComment, updatePRComment } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 import type { RepoInfo } from "../pipeline/fetchRepoContext";
-import { retryWithBackoff } from "../utils/retry";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
+import { ingestPushChanges, type PushFileChange } from "../services/ingestionService";
 import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
@@ -60,6 +60,20 @@ interface PullRequestReviewCommentPayload {
     pull_request: {
         number: number;
     };
+    repository: WebhookRepository;
+    installation?: { id?: number };
+}
+
+interface PushCommit {
+    added: string[];
+    removed: string[];
+    modified: string[];
+}
+
+interface PushPayload {
+    ref: string;
+    after: string;
+    commits: PushCommit[];
     repository: WebhookRepository;
     installation?: { id?: number };
 }
@@ -120,6 +134,19 @@ const isValidPRReviewCommentPayload = (body: unknown): body is PullRequestReview
 
     const pullRequest = b.pull_request as Record<string, unknown> | undefined;
     if (!pullRequest || typeof pullRequest.number !== 'number') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidPushPayload = (body: unknown): body is PushPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.ref !== 'string' || typeof b.after !== 'string') return false;
+    if (!Array.isArray(b.commits)) return false;
 
     const repo = b.repository as Record<string, unknown> | undefined;
     if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
@@ -219,6 +246,27 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     }));
 };
 
+// Generation-counter map for deduplicating concurrent async work on the same key.
+// Each new event for a key increments its generation; after the async work finishes,
+// results are only applied if the generation hasn't been superseded.
+const activeGenerations = new Map<string, number>();
+
+const nextGeneration = (key: string): number => {
+    const gen = (activeGenerations.get(key) ?? 0) + 1;
+    activeGenerations.set(key, gen);
+    return gen;
+};
+
+const isCurrentGeneration = (key: string, gen: number): boolean => {
+    return activeGenerations.get(key) === gen;
+};
+
+const clearGeneration = (key: string, gen: number): void => {
+    if (activeGenerations.get(key) === gen) {
+        activeGenerations.delete(key);
+    }
+};
+
 // Validates the webhook signature against the configured secret.
 const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -250,44 +298,74 @@ const validateInstallationId = (installation?: { id?: unknown }): number | null 
 };
 
 // Executes end-to-end PR analysis and posts summary plus inline comments.
-const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
-    const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
+// Accepts a generation number so stale results from superseded events are discarded.
+const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number, dedupKey: string, generation: number) => {
+    const owner = repoData.owner.login;
+    const repo = repoData.name;
+    const prNumber = prDataPayload.number;
 
-    logger.info({ fileCount: files.length, prNumber: prDataPayload.number }, "Fetched files for PR analysis");
+    // Post a placeholder comment so the author knows review is in progress.
+    let commentId: number | undefined;
+    try {
+        commentId = await createPRComment(
+            owner, repo, prNumber,
+            "⏳ **Prism AI** is reviewing this pull request…",
+            installationId
+        );
+    } catch (err: unknown) {
+        logger.warn({ prNumber, message: getErrorMessage(err) }, "Failed to post progress comment — continuing without it");
+    }
+
+    const updateOrPost = async (body: string) => {
+        if (commentId) {
+            await updatePRComment(owner, repo, commentId, body, installationId);
+        } else {
+            await postPullRequestComment(owner, repo, prNumber, body, installationId);
+        }
+    };
+
+    const { prData, files } = await fetchPRDetails(owner, repo, prNumber, installationId);
+
+    logger.info({ fileCount: files.length, prNumber }, "Fetched files for PR analysis");
 
     const repoInfo: RepoInfo = {
-        owner: repoData.owner.login,
-        repo: repoData.name,
+        owner,
+        repo,
         headSha: prData.head.sha,
         installationId,
     };
 
     let analysis: string;
     try {
-        analysis = await analyzeFiles(files, prDataPayload.number, repoInfo);
+        analysis = await analyzeFiles(files, prNumber, repoInfo);
     } catch (err: unknown) {
+        clearGeneration(dedupKey, generation);
         logger.error({
-            prNumber: prDataPayload.number,
+            prNumber,
             repo: repoData.full_name,
             message: getErrorMessage(err),
             stack: getErrorStack(err),
         }, "AI analysis failed — skipping comment posting");
+        try {
+            await updateOrPost("❌ **Prism AI** encountered an error while reviewing this pull request.");
+        } catch { /* best-effort */ }
         throw err;
     }
 
-    logger.info({ prNumber: prDataPayload.number, analysis }, "AI Review for PR");
+    // If a newer event arrived for this PR while we were analyzing, discard our results.
+    if (!isCurrentGeneration(dedupKey, generation)) {
+        logger.info({ prNumber, generation }, "Analysis superseded by newer event — discarding");
+        return;
+    }
+    clearGeneration(dedupKey, generation);
+
+    logger.info({ prNumber, analysis }, "AI Review for PR");
 
     try {
-        await postPullRequestComment(
-            repoData.owner.login,
-            repoData.name,
-            prDataPayload.number,
-            `### AI Review\n\n${analysis}`,
-            installationId
-        );
+        await updateOrPost(`### AI Review\n\n${analysis}`);
     } catch (err: unknown) {
         logger.error({
-            prNumber: prDataPayload.number,
+            prNumber,
             message: getErrorMessage(err),
         }, "Failed to post PR summary comment");
     }
@@ -348,7 +426,11 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
             return res.status(400).send("Missing or invalid installation.id");
         }
 
-        analyzeAndCommentOnPR(pr, repo, installationId).catch((err: unknown) => {
+        const dedupKey = `pr:${repo.full_name}#${pr.number}`;
+        const generation = nextGeneration(dedupKey);
+
+        analyzeAndCommentOnPR(pr, repo, installationId, dedupKey, generation).catch((err: unknown) => {
+            clearGeneration(dedupKey, generation);
             logger.error({
                 prNumber: pr.number,
                 repo: repo.full_name,
@@ -362,6 +444,64 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
+// Handles push webhook events for incremental vector DB ingestion.
+const handlePushEvent = (req: Request, res: Response) => {
+    if (!isValidPushPayload(req.body)) {
+        return res.status(422).send("Invalid push payload");
+    }
+    const payload = req.body;
+    const { ref, after, commits, repository: repo } = payload;
+
+    // Only ingest pushes to the default branch (main or master).
+    const branch = ref.replace('refs/heads/', '');
+    if (branch !== 'main' && branch !== 'master') {
+        return res.status(200).send("Non-default branch push ignored");
+    }
+
+    const installationId = validateInstallationId(payload.installation);
+    if (!installationId) {
+        logger.error({ ref, repo: repo.full_name }, "Push event missing installation.id");
+        return res.status(400).send("Missing or invalid installation.id");
+    }
+
+    // Aggregate file changes across all commits in this push.
+    const changes: PushFileChange = { added: [], removed: [], modified: [] };
+    for (const commit of commits) {
+        if (Array.isArray(commit.added)) changes.added.push(...commit.added);
+        if (Array.isArray(commit.removed)) changes.removed.push(...commit.removed);
+        if (Array.isArray(commit.modified)) changes.modified.push(...commit.modified);
+    }
+
+    const totalChanges = changes.added.length + changes.removed.length + changes.modified.length;
+    if (totalChanges === 0) {
+        return res.status(200).send("No file changes to ingest");
+    }
+
+    logger.info(
+        { branch, repo: repo.full_name, added: changes.added.length, removed: changes.removed.length, modified: changes.modified.length },
+        "Push event — starting ingestion"
+    );
+
+    const dedupKey = `push:${repo.full_name}:${branch}`;
+    const generation = nextGeneration(dedupKey);
+
+    ingestPushChanges(repo.owner.login, repo.name, after, changes, installationId).then(
+        () => { clearGeneration(dedupKey, generation); }
+    ).catch(
+        (err: unknown) => {
+            clearGeneration(dedupKey, generation);
+            logger.error({
+                repo: repo.full_name,
+                ref,
+                message: getErrorMessage(err),
+                stack: getErrorStack(err),
+            }, "Push ingestion failed");
+        }
+    );
+
+    return res.sendStatus(200);
+};
+
 // Webhook entry point — verifies signature and routes to event-specific handlers.
 export const handleWebhook = (req: Request, res: Response) => {
     if (!verifyWebhookSignature(req)) {
@@ -371,6 +511,8 @@ export const handleWebhook = (req: Request, res: Response) => {
     const event = req.headers["x-github-event"] as string;
 
     switch (event) {
+        case "push":
+            return handlePushEvent(req, res);
         case "issue_comment":
             return handleIssueCommentEvent(req, res);
         case "pull_request_review_comment":
