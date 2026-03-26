@@ -13,6 +13,8 @@
   "exclude": [
     "src/eslint.config.mts",
     "dist",
-    "node_modules"
+    "node_modules",
+    "tests",
+    "vitest.config.ts"
   ]
 }

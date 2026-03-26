@@ -1,4 +1,5 @@
-// Indexes every tracked file in the repo into Pinecone for RAG cold-start seeding.
+// LOCAL-ONLY cold-start script — indexes every tracked file in the repo into Pinecone.
+// For ongoing ingestion, the server handles `push` webhook events automatically.
 // Usage: npx ts-node src/scripts/ingestRepo.ts [--dry-run]
 
 import 'dotenv/config';

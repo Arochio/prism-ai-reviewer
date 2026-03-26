@@ -3,8 +3,8 @@ import crypto from "crypto";
 import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 import type { RepoInfo } from "../pipeline/fetchRepoContext";
-import { retryWithBackoff } from "../utils/retry";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
+import { ingestPushChanges, type PushFileChange } from "../services/ingestionService";
 import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
@@ -60,6 +60,20 @@ interface PullRequestReviewCommentPayload {
     pull_request: {
         number: number;
     };
+    repository: WebhookRepository;
+    installation?: { id?: number };
+}
+
+interface PushCommit {
+    added: string[];
+    removed: string[];
+    modified: string[];
+}
+
+interface PushPayload {
+    ref: string;
+    after: string;
+    commits: PushCommit[];
     repository: WebhookRepository;
     installation?: { id?: number };
 }
@@ -120,6 +134,19 @@ const isValidPRReviewCommentPayload = (body: unknown): body is PullRequestReview
 
     const pullRequest = b.pull_request as Record<string, unknown> | undefined;
     if (!pullRequest || typeof pullRequest.number !== 'number') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidPushPayload = (body: unknown): body is PushPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.ref !== 'string' || typeof b.after !== 'string') return false;
+    if (!Array.isArray(b.commits)) return false;
 
     const repo = b.repository as Record<string, unknown> | undefined;
     if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
@@ -362,6 +389,58 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
+// Handles push webhook events for incremental vector DB ingestion.
+const handlePushEvent = (req: Request, res: Response) => {
+    if (!isValidPushPayload(req.body)) {
+        return res.status(422).send("Invalid push payload");
+    }
+    const payload = req.body;
+    const { ref, after, commits, repository: repo } = payload;
+
+    // Only ingest pushes to the default branch (main or master).
+    const branch = ref.replace('refs/heads/', '');
+    if (branch !== 'main' && branch !== 'master') {
+        return res.status(200).send("Non-default branch push ignored");
+    }
+
+    const installationId = validateInstallationId(payload.installation);
+    if (!installationId) {
+        logger.error({ ref, repo: repo.full_name }, "Push event missing installation.id");
+        return res.status(400).send("Missing or invalid installation.id");
+    }
+
+    // Aggregate file changes across all commits in this push.
+    const changes: PushFileChange = { added: [], removed: [], modified: [] };
+    for (const commit of commits) {
+        if (Array.isArray(commit.added)) changes.added.push(...commit.added);
+        if (Array.isArray(commit.removed)) changes.removed.push(...commit.removed);
+        if (Array.isArray(commit.modified)) changes.modified.push(...commit.modified);
+    }
+
+    const totalChanges = changes.added.length + changes.removed.length + changes.modified.length;
+    if (totalChanges === 0) {
+        return res.status(200).send("No file changes to ingest");
+    }
+
+    logger.info(
+        { branch, repo: repo.full_name, added: changes.added.length, removed: changes.removed.length, modified: changes.modified.length },
+        "Push event — starting ingestion"
+    );
+
+    ingestPushChanges(repo.owner.login, repo.name, after, changes, installationId).catch(
+        (err: unknown) => {
+            logger.error({
+                repo: repo.full_name,
+                ref,
+                message: getErrorMessage(err),
+                stack: getErrorStack(err),
+            }, "Push ingestion failed");
+        }
+    );
+
+    return res.sendStatus(200);
+};
+
 // Webhook entry point — verifies signature and routes to event-specific handlers.
 export const handleWebhook = (req: Request, res: Response) => {
     if (!verifyWebhookSignature(req)) {
@@ -371,6 +450,8 @@ export const handleWebhook = (req: Request, res: Response) => {
     const event = req.headers["x-github-event"] as string;
 
     switch (event) {
+        case "push":
+            return handlePushEvent(req, res);
         case "issue_comment":
             return handleIssueCommentEvent(req, res);
         case "pull_request_review_comment":

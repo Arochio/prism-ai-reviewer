@@ -1,4 +1,4 @@
-import axios from "axios";
+import OpenAI from 'openai';
 import { openAIConfig } from "../config/openai.config";
 import { storeEmbedding } from './vectorService';
 import { getCachedOpenAIResponse, setCachedOpenAIResponse } from "./cacheService";
@@ -12,7 +12,8 @@ import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
 import { logger } from './logger';
-import { retryWithBackoff } from '../utils/retry';
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Converts unknown errors into a stable log message.
 const getErrorMessage = (error: unknown): string => {
@@ -36,50 +37,35 @@ const buildCacheKey = (files: ProcessedFile[]): string => {
 };
 
 // Sends a single chat completion request to the OpenAI API using shared config.
+// The OpenAI SDK handles retries (2 by default) and rate-limit backoff automatically.
 export const callOpenAI = async (systemPrompt: string, userContent: string): Promise<string> => {
-  let response;
+  let result: string | null;
   try {
-    response = await retryWithBackoff(
-      () => axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: openAIConfig.model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userContent },
-          ],
-          max_tokens: openAIConfig.maxTokens,
-          temperature: openAIConfig.temperature,
-          top_p: openAIConfig.topP,
-          n: openAIConfig.n,
-          frequency_penalty: openAIConfig.frequencyPenalty,
-          presence_penalty: openAIConfig.presencePenalty,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-        }
-      ),
-      3,
-      1000,
-      "openai.chat.completions"
-    );
+    const completion = await openai.chat.completions.create({
+      model: openAIConfig.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: openAIConfig.maxTokens,
+      temperature: openAIConfig.temperature,
+      top_p: openAIConfig.topP,
+      n: openAIConfig.n,
+      frequency_penalty: openAIConfig.frequencyPenalty,
+      presence_penalty: openAIConfig.presencePenalty,
+    });
+    result = completion.choices?.[0]?.message?.content;
   } catch (err: unknown) {
-    const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-    const data = axios.isAxiosError(err) ? err.response?.data : undefined;
+    const status = err instanceof OpenAI.APIError ? err.status : undefined;
     logger.error({
       status,
-      data,
       message: getErrorMessage(err),
     }, "OpenAI API request failed");
     throw new Error(`OpenAI API request failed${status ? ` (status ${status})` : ""}`);
   }
 
-  const result: string = response.data.choices?.[0]?.message?.content;
   if (!result) {
-    logger.error({ data: response.data }, "OpenAI returned an empty or unexpected response");
+    logger.error("OpenAI returned an empty or unexpected response");
     throw new Error("OpenAI returned no content in response");
   }
 
