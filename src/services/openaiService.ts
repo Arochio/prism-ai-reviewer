@@ -121,7 +121,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Validates findings to filter false positives, duplicates, and speculative issues.
   const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
     bugRaw, designRaw, performanceRaw,
-    enrichedFiles, repoContext, callOpenAI
+    enrichedFiles, repoContext, customRules, callOpenAI
   );
 
   const ranked = rankFindings(bugValidated, designValidated, performanceValidated);

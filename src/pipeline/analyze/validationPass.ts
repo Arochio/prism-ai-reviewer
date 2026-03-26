@@ -16,18 +16,20 @@ const VALIDATION_SYSTEM_PROMPT =
   'For each finding in the input, output one of:\n' +
   '- `KEEP: - [<severity>] <original finding text>` — if the finding is valid and grounded in real code.\n' +
   '- `DROP: <original finding text> — Reason: <one-sentence explanation>` — if the finding should be removed.\n\n' +
+  'If a <custom_review_rules> section is present, also DROP any finding that violates those rules (e.g. a rule says "do not flag X" and the finding flags X).\n\n' +
   'Be aggressive about dropping. A review with zero findings is better than a review with false positives.\n' +
   'Do NOT add new findings. Do NOT modify the text of kept findings. Only output KEEP or DROP lines.';
 
 const buildValidationContent = (
   findings: string,
   files: ProcessedFile[],
-  repoContext: string
+  repoContext: string,
+  customRules: string
 ): string => {
   const codeSection = files
     .map((f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}`)
     .join('\n\n');
-  return `${repoContext}\n\n<source_code>\n${codeSection}\n</source_code>\n\n<findings_to_validate>\n${findings}\n</findings_to_validate>`;
+  return `${repoContext}${customRules}\n\n<source_code>\n${codeSection}\n</source_code>\n\n<findings_to_validate>\n${findings}\n</findings_to_validate>`;
 };
 
 // Extracts the kept findings from the validator output.
@@ -45,6 +47,7 @@ export const runValidationPass = async (
   performanceRaw: string,
   files: ProcessedFile[],
   repoContext: string,
+  customRules: string,
   callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>
 ): Promise<{ bugValidated: string; designValidated: string; performanceValidated: string }> => {
   // Combine all findings with pass labels for the validator.
@@ -56,7 +59,7 @@ export const runValidationPass = async (
 
   const validatorOutput = await callOpenAI(
     VALIDATION_SYSTEM_PROMPT,
-    buildValidationContent(allFindings, files, repoContext)
+    buildValidationContent(allFindings, files, repoContext, customRules)
   );
 
   const keptLines = parseValidatedFindings(validatorOutput);
