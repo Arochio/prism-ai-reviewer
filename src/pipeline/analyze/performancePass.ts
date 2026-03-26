@@ -13,14 +13,19 @@ const PERFORMANCE_PASS_SYSTEM_PROMPT =
   '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n' +
   '- Duplication: re-implementing logic that already exists in the repo\n\n' +
   'RULES:\n' +
-  '- Every finding MUST cite a specific code pattern, loop, await chain, or allocation from the provided files. Do not report vague or generic advice.\n' +
-  '- If the code already mitigates a concern (e.g. uses caching, batching, concurrency limits, or pagination), do NOT flag it.\n' +
-  '- Only report issues with measurable impact. Do not flag micro-optimisations or theoretical concerns unlikely to matter at realistic scale.\n' +
+  '- Every finding MUST quote the exact code pattern that is inefficient (use backticks). If you cannot quote a real snippet from the provided code, do not report it.\n' +
+  '- If the code already mitigates a concern (caching, batching, concurrency limits, pagination, bounded inputs), do NOT flag it. Check for size caps, .slice() limits, and config bounds before reporting.\n' +
+  '- Only report issues with measurable impact at realistic scale. Do not flag micro-optimisations, theoretical concerns, or standard language idioms.\n' +
+  '- Do NOT report the same issue reported by another pass or duplicate a finding within your own output.\n' +
   '- Prefer fewer, high-confidence findings over many speculative ones. When in doubt, do not report.\n\n' +
+  'SELF-CHECK — Before including any finding in your output, verify:\n' +
+  '1. Can I quote the exact code that is slow? If not, discard.\n' +
+  '2. Are the inputs actually unbounded, or are they already capped by config/limits/slice? If bounded, discard.\n' +
+  '3. Would this matter at the actual data sizes this code handles, or only at extreme theoretical scale? If the latter, discard.\n\n' +
   'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
   'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>:<line or function>: <concise description citing the specific code pattern>`\n' +
+  '`- [<severity>] <filename>:<line or function>: <description>. Problematic code: \`<exact snippet>\``\n' +
   'Severity must be one of: High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No performance findings.';
 

@@ -7,6 +7,7 @@ import { retrieveContext } from '../pipeline/retrieveContext';
 import { runBugPass } from '../pipeline/analyze/bugPass';
 import { runDesignPass } from '../pipeline/analyze/designPass';
 import { runPerformancePass } from '../pipeline/analyze/performancePass';
+import { runValidationPass } from '../pipeline/analyze/validationPass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
@@ -117,7 +118,13 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules),
   ]);
 
-  const ranked = rankFindings(bugRaw, designRaw, performanceRaw);
+  // Validates findings to filter false positives, duplicates, and speculative issues.
+  const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
+    bugRaw, designRaw, performanceRaw,
+    enrichedFiles, repoContext, callOpenAI
+  );
+
+  const ranked = rankFindings(bugValidated, designValidated, performanceValidated);
   const summary = generateSummary(ranked);
 
   if (openAIConfig.enableCache) {

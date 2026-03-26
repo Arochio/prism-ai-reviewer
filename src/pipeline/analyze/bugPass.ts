@@ -12,14 +12,19 @@ const BUG_PASS_SYSTEM_PROMPT =
   '- Error handling: unhandled exceptions, swallowed errors, missing input validation\n' +
   '- Integration: breaking changes to shared interfaces, incorrect usage of APIs defined elsewhere in the repo\n\n' +
   'RULES:\n' +
-  '- Every finding MUST cite a specific code pattern, line, or expression from the provided files. Do not report vague or generic advice.\n' +
-  '- If the code already handles a concern (e.g. has error handling, validation, guards, or fallbacks), do NOT flag it.\n' +
-  '- Only report issues that would cause a bug, crash, security breach, or data loss. Do not flag stylistic preferences or hypothetical scenarios.\n' +
+  '- Every finding MUST quote the exact problematic code snippet (use backticks). If you cannot quote a real snippet from the provided code, do not report it.\n' +
+  '- If the code already handles a concern (try/catch, null coalescing, guards, validation, defaults, fallbacks), do NOT flag it. Read the surrounding code carefully before reporting.\n' +
+  '- Only report issues that would cause a bug, crash, security breach, or data loss in practice. Do not flag hypothetical scenarios, edge cases already guarded, or standard language behaviors (e.g. .slice() on short arrays).\n' +
+  '- Do NOT report the same issue reported by another pass or duplicate a finding within your own output.\n' +
   '- Prefer fewer, high-confidence findings over many speculative ones. When in doubt, do not report.\n\n' +
+  'SELF-CHECK — Before including any finding in your output, verify:\n' +
+  '1. Can I quote the exact code that is broken? If not, discard.\n' +
+  '2. Is there existing handling (try/catch, fallback, guard, || default) in the same file or caller? If yes, discard.\n' +
+  '3. Would this actually break in production, or is it a stylistic preference / theoretical concern? If the latter, discard.\n\n' +
   'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
   'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>:<line or function>: <concise description citing the specific code pattern>`\n' +
+  '`- [<severity>] <filename>:<line or function>: <description>. Problematic code: \`<exact snippet>\``\n' +
   'Severity must be one of: Critical, High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No bug findings.';
 

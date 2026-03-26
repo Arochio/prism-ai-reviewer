@@ -13,14 +13,19 @@ const DESIGN_PASS_SYSTEM_PROMPT =
   '- API design: inconsistent interfaces, leaky abstractions, poor separation of concerns\n' +
   '- Consistency: deviations from conventions used elsewhere in the codebase\n\n' +
   'RULES:\n' +
-  '- Every finding MUST reference a specific function, type, pattern, or code structure from the provided files. Do not report vague or generic advice.\n' +
-  '- If the codebase already follows a convention and the changed code is consistent with it, do NOT flag it.\n' +
+  '- Every finding MUST quote the exact code pattern that is problematic (use backticks). If you cannot quote a real snippet from the provided code, do not report it.\n' +
+  '- If the codebase already follows a convention and the changed code is consistent with it, do NOT flag it. Read the context files carefully before claiming inconsistency.\n' +
   '- Only report issues that meaningfully degrade maintainability or violate the project\'s established patterns. Do not flag minor stylistic preferences.\n' +
+  '- Do NOT report the same issue reported by another pass or duplicate a finding within your own output.\n' +
   '- Prefer fewer, high-confidence findings over many speculative ones. When in doubt, do not report.\n\n' +
+  'SELF-CHECK — Before including any finding in your output, verify:\n' +
+  '1. Can I quote the exact code that violates the pattern? If not, discard.\n' +
+  '2. Does the rest of the codebase actually follow a different convention, or am I imposing my own preference? If the latter, discard.\n' +
+  '3. Would fixing this materially improve maintainability, or is it cosmetic? If cosmetic, discard.\n\n' +
   'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
   'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>:<function or type>: <concise description citing the specific code pattern>`\n' +
+  '`- [<severity>] <filename>:<function or type>: <description>. Problematic code: \`<exact snippet>\``\n' +
   'Severity must be one of: High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No design findings.';
 
