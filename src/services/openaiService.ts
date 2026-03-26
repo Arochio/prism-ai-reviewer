@@ -111,12 +111,10 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Fetches full repository context (file tree + related file contents + custom rules).
   const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
 
-  // Runs all three analysis passes in parallel to reduce total latency.
-  const [bugRaw, designRaw, performanceRaw] = await Promise.all([
-    runBugPass(enrichedFiles, callOpenAI, repoContext, customRules),
-    runDesignPass(enrichedFiles, callOpenAI, repoContext, customRules),
-    runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules),
-  ]);
+  // Runs analysis passes sequentially to stay within TPM rate limits.
+  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, repoContext, customRules);
+  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, repoContext, customRules);
+  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules);
 
   // Validates findings to filter false positives, duplicates, and speculative issues.
   const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
