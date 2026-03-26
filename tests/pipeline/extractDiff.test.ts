@@ -85,7 +85,7 @@ describe('extractDiff', () => {
     ];
     const result = extractDiff(filesAtLimit);
     expect(result).toHaveLength(1);
-    expect(result[0].content).toBe('x'.repeat(100));
+    expect(result[0].content).toBe('1 | ' + 'x'.repeat(100));
   });
 
   it('handles null content gracefully', () => {
@@ -94,7 +94,7 @@ describe('extractDiff', () => {
     ];
     const result = extractDiff(files);
     expect(result).toHaveLength(1);
-    expect(result[0].content).toBe('');
+    expect(result[0].content).toBe('1 | ');
   });
 
   it('handles undefined content gracefully', () => {
@@ -103,7 +103,7 @@ describe('extractDiff', () => {
     ];
     const result = extractDiff(files);
     expect(result).toHaveLength(1);
-    expect(result[0].content).toBe('');
+    expect(result[0].content).toBe('1 | ');
   });
 
   it('sets default similarText and embedding', () => {
@@ -113,5 +113,22 @@ describe('extractDiff', () => {
     const result = extractDiff(files);
     expect(result[0].similarText).toBe('');
     expect(result[0].embedding).toBeNull();
+    expect(result[0].patch).toBe('');
+  });
+
+  it('preserves patch from input', () => {
+    const files: AnalyzableFile[] = [
+      { filename: 'a.ts', status: 'added', content: 'code', patch: '@@ -0,0 +1 @@\n+code' },
+    ];
+    const result = extractDiff(files);
+    expect(result[0].patch).toBe('@@ -0,0 +1 @@\n+code');
+  });
+
+  it('adds line numbers to content', () => {
+    const files: AnalyzableFile[] = [
+      { filename: 'a.ts', status: 'added', content: 'line1\nline2\nline3' },
+    ];
+    const result = extractDiff(files);
+    expect(result[0].content).toBe('1 | line1\n2 | line2\n3 | line3');
   });
 });

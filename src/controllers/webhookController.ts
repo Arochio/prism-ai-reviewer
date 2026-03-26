@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
+import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments, createPRComment, updatePRComment } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 import type { RepoInfo } from "../pipeline/fetchRepoContext";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
@@ -300,51 +300,72 @@ const validateInstallationId = (installation?: { id?: unknown }): number | null 
 // Executes end-to-end PR analysis and posts summary plus inline comments.
 // Accepts a generation number so stale results from superseded events are discarded.
 const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number, dedupKey: string, generation: number) => {
-    const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
+    const owner = repoData.owner.login;
+    const repo = repoData.name;
+    const prNumber = prDataPayload.number;
 
-    logger.info({ fileCount: files.length, prNumber: prDataPayload.number }, "Fetched files for PR analysis");
+    // Post a placeholder comment so the author knows review is in progress.
+    let commentId: number | undefined;
+    try {
+        commentId = await createPRComment(
+            owner, repo, prNumber,
+            "⏳ **Prism AI** is reviewing this pull request…",
+            installationId
+        );
+    } catch (err: unknown) {
+        logger.warn({ prNumber, message: getErrorMessage(err) }, "Failed to post progress comment — continuing without it");
+    }
+
+    const updateOrPost = async (body: string) => {
+        if (commentId) {
+            await updatePRComment(owner, repo, commentId, body, installationId);
+        } else {
+            await postPullRequestComment(owner, repo, prNumber, body, installationId);
+        }
+    };
+
+    const { prData, files } = await fetchPRDetails(owner, repo, prNumber, installationId);
+
+    logger.info({ fileCount: files.length, prNumber }, "Fetched files for PR analysis");
 
     const repoInfo: RepoInfo = {
-        owner: repoData.owner.login,
-        repo: repoData.name,
+        owner,
+        repo,
         headSha: prData.head.sha,
         installationId,
     };
 
     let analysis: string;
     try {
-        analysis = await analyzeFiles(files, prDataPayload.number, repoInfo);
+        analysis = await analyzeFiles(files, prNumber, repoInfo);
     } catch (err: unknown) {
         clearGeneration(dedupKey, generation);
         logger.error({
-            prNumber: prDataPayload.number,
+            prNumber,
             repo: repoData.full_name,
             message: getErrorMessage(err),
             stack: getErrorStack(err),
         }, "AI analysis failed — skipping comment posting");
+        try {
+            await updateOrPost("❌ **Prism AI** encountered an error while reviewing this pull request.");
+        } catch { /* best-effort */ }
         throw err;
     }
 
     // If a newer event arrived for this PR while we were analyzing, discard our results.
     if (!isCurrentGeneration(dedupKey, generation)) {
-        logger.info({ prNumber: prDataPayload.number, generation }, "Analysis superseded by newer event — discarding");
+        logger.info({ prNumber, generation }, "Analysis superseded by newer event — discarding");
         return;
     }
     clearGeneration(dedupKey, generation);
 
-    logger.info({ prNumber: prDataPayload.number, analysis }, "AI Review for PR");
+    logger.info({ prNumber, analysis }, "AI Review for PR");
 
     try {
-        await postPullRequestComment(
-            repoData.owner.login,
-            repoData.name,
-            prDataPayload.number,
-            `### AI Review\n\n${analysis}`,
-            installationId
-        );
+        await updateOrPost(`### AI Review\n\n${analysis}`);
     } catch (err: unknown) {
         logger.error({
-            prNumber: prDataPayload.number,
+            prNumber,
             message: getErrorMessage(err),
         }, "Failed to post PR summary comment");
     }

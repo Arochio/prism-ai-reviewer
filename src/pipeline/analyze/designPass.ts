@@ -22,16 +22,25 @@ const DESIGN_PASS_SYSTEM_PROMPT =
   '1. Can I quote the exact code that violates the pattern? If not, discard.\n' +
   '2. Does the rest of the codebase actually follow a different convention, or am I imposing my own preference? If the latter, discard.\n' +
   '3. Would fixing this materially improve maintainability, or is it cosmetic? If cosmetic, discard.\n\n' +
+  'DIFF PRECISION:\n' +
+  '- Each file includes a unified diff showing exactly which lines were added (+) or removed (-), plus line-numbered full source.\n' +
+  '- Focus your review on the changed lines (lines with + in the diff). Only flag unchanged code if changes introduce a new design concern.\n' +
+  '- Reference line numbers from the line-numbered source (e.g. L42). Use the diff to identify what changed and the full source for surrounding context.\n\n' +
   'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
   'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>:<function or type>: <description>. Problematic code: \`<exact snippet>\``\n' +
-  'Severity must be one of: High, Medium, Low.\n' +
+  '`- [<severity>] <filename>:L<line_number>: <description>. Problematic code: \`<exact snippet>\``\n' +
+  'Severity must be one of: High, Medium, Low. The line_number MUST match the line-numbered source provided.\n' +
   'If no issues are found, respond with exactly: No design findings.';
 
 const buildUserContent = (files: ProcessedFile[], repoContext: string, customRules: string): string => {
   const changedSection = files
-    .map((f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}${f.similarText}`)
+    .map((f) => {
+      const diffBlock = f.patch
+        ? `\nUnified Diff:\n\`\`\`diff\n${f.patch}\n\`\`\`\n`
+        : '';
+      return `---\nFilename: ${f.filename}\nStatus: ${f.status}\n${diffBlock}\nFull source (line-numbered):\n${f.content}${f.similarText}`;
+    })
     .join('\n\n');
   return `${repoContext}${customRules}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
 };

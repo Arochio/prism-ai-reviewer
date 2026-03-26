@@ -388,6 +388,59 @@ const postComment = async (token: string, owner: string, repo: string, prNumber:
   );
 };
 
+// Creates a PR comment and returns its ID so it can be updated later.
+export const createPRComment = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  body: string,
+  installationId: number
+): Promise<number> => {
+  const token = await getInstallationToken(installationId);
+  const response = await withGitHubRateLimitRetry(
+    () => axios.post<{ id: number }>(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+      { body },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    ),
+    `createPRComment:${owner}/${repo}#${prNumber}`
+  );
+  return response.data.id;
+};
+
+// Updates an existing PR issue comment by ID.
+export const updatePRComment = async (
+  owner: string,
+  repo: string,
+  commentId: number,
+  body: string,
+  installationId: number
+): Promise<void> => {
+  const token = await getInstallationToken(installationId);
+
+  const maxContentLength = GITHUB_COMMENT_MAX_LENGTH - TRUNCATION_NOTICE.length;
+  const safeBody = truncateAtLineBoundary(body, maxContentLength);
+
+  await withGitHubRateLimitRetry(
+    () => axios.patch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/comments/${commentId}`,
+      { body: safeBody },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    ),
+    `updatePRComment:${owner}/${repo}:${commentId}`
+  );
+};
+
 // Posts the top-level PR review summary comment with length safeguards.
 export const postPullRequestComment = async (
   owner: string,

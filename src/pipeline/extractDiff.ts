@@ -5,12 +5,14 @@ export interface AnalyzableFile {
   filename: string;
   status: string;
   content?: string | null;
+  patch?: string;
 }
 
 export interface ProcessedFile {
   filename: string;
   status: string;
   content: string;
+  patch: string;
   similarText: string;
   embedding: number[] | null;
 }
@@ -32,15 +34,23 @@ const isIncludedFile = (f: AnalyzableFile): boolean => {
   return true;
 };
 
+// Adds 1-based line numbers to source content for precise line references.
+const addLineNumbers = (source: string): string =>
+  source
+    .split('\n')
+    .map((line, i) => `${i + 1} | ${line}`)
+    .join('\n');
+
 const toProcessedFile = (f: AnalyzableFile): ProcessedFile => {
   const raw = f.content || '';
-  const content =
+  const truncated =
     raw.slice(0, openAIConfig.fileContentSizeLimit) +
     (raw.length > openAIConfig.fileContentSizeLimit ? '\n\n...truncated...' : '');
   return {
     filename: f.filename,
     status: f.status,
-    content,
+    content: addLineNumbers(truncated),
+    patch: f.patch || '',
     similarText: '',
     embedding: null,
   };
