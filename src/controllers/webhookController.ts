@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
+import type { RepoInfo } from "../pipeline/fetchRepoContext";
 import { retryWithBackoff } from "../utils/retry";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
 import { logger } from "../services/logger";
@@ -254,9 +255,16 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
 
     logger.info({ fileCount: files.length, prNumber: prDataPayload.number }, "Fetched files for PR analysis");
 
+    const repoInfo: RepoInfo = {
+        owner: repoData.owner.login,
+        repo: repoData.name,
+        headSha: prData.head.sha,
+        installationId,
+    };
+
     let analysis: string;
     try {
-        analysis = await analyzeFiles(files, prDataPayload.number);
+        analysis = await analyzeFiles(files, prDataPayload.number, repoInfo);
     } catch (err: unknown) {
         logger.error({
             prNumber: prDataPayload.number,
@@ -269,8 +277,6 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
 
     logger.info({ prNumber: prDataPayload.number, analysis }, "AI Review for PR");
 
-    // Post results independently so a comment failure doesn't lose the analysis
-    // or cause duplicate OpenAI calls on retry.
     try {
         await postPullRequestComment(
             repoData.owner.login,
@@ -284,26 +290,6 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
             prNumber: prDataPayload.number,
             message: getErrorMessage(err),
         }, "Failed to post PR summary comment");
-    }
-
-    try {
-        const inlineComments = buildInlineComments(files, analysis);
-
-        if (inlineComments.length > 0 && prData.head?.sha) {
-            await postPullRequestInlineComments(
-                repoData.owner.login,
-                repoData.name,
-                prDataPayload.number,
-                installationId,
-                prData.head.sha,
-                inlineComments
-            );
-        }
-    } catch (err: unknown) {
-        logger.error({
-            prNumber: prDataPayload.number,
-            message: getErrorMessage(err),
-        }, "Failed to post inline review comments");
     }
 };
 
@@ -362,19 +348,14 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
             return res.status(400).send("Missing or invalid installation.id");
         }
 
-        retryWithBackoff(
-            () => analyzeAndCommentOnPR(pr, repo, installationId),
-            3,
-            1000,
-            `PR #${pr.number} analysis`
-        ).catch((err: unknown) => {
+        analyzeAndCommentOnPR(pr, repo, installationId).catch((err: unknown) => {
             logger.error({
                 prNumber: pr.number,
                 repo: repo.full_name,
                 action,
                 message: getErrorMessage(err),
                 stack: getErrorStack(err),
-            }, "analyzeAndCommentOnPR failed after all retries");
+            }, "analyzeAndCommentOnPR failed");
         });
     }
 

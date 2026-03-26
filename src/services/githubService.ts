@@ -539,3 +539,119 @@ export const fetchCommentBody = async (
     return null;
   }
 };
+
+export interface GitHubTreeEntry {
+  path: string;
+  type: 'blob' | 'tree';
+  size?: number;
+}
+
+// Fetches the full recursive file tree for a given commit SHA.
+export const fetchRepoTree = async (
+  owner: string,
+  repo: string,
+  sha: string,
+  installationId: number
+): Promise<GitHubTreeEntry[]> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<{ tree: GitHubTreeEntry[]; truncated: boolean }>(
+        `https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+          },
+        }
+      ),
+      `fetchRepoTree:${owner}/${repo}`
+    );
+    if (response.data.truncated) {
+      logger.warn({ owner, repo, sha }, "GitHub tree response was truncated — some files may be missing from context");
+    }
+    return (response.data.tree || []).filter(
+      (entry): entry is GitHubTreeEntry =>
+        entry != null && typeof entry.path === 'string' && entry.path.length > 0
+    );
+  } catch (err: unknown) {
+    const { status, message } = getAxiosErrorDetails(err);
+    logger.error({ owner, repo, sha, status, message }, "Failed to fetch repo tree");
+    return [];
+  }
+};
+
+// Fetches raw file content for a list of file paths at a given ref.
+// Individual file failures are non-blocking and return null content.
+export const fetchRepoFileContents = async (
+  owner: string,
+  repo: string,
+  ref: string,
+  filePaths: string[],
+  installationId: number
+): Promise<{ path: string; content: string | null }[]> => {
+  const token = await getInstallationToken(installationId);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github.v3.raw",
+  };
+
+  return Promise.all(
+    filePaths.map(async (filePath) => {
+      try {
+        const response = await withGitHubRateLimitRetry(
+          () => axios.get<string>(
+            `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath)}?ref=${ref}`,
+            { headers, responseType: 'text' }
+          ),
+          `fetchRepoFile:${owner}/${repo}:${filePath}`
+        );
+        const content = typeof response.data === 'string' ? response.data : null;
+        return { path: filePath, content };
+      } catch (err: unknown) {
+        const { status, message } = getAxiosErrorDetails(err);
+        logger.error({ filePath, status, message }, `Failed to fetch repo file ${filePath}`);
+        return { path: filePath, content: null };
+      }
+    })
+  );
+};
+
+// Fetches the .prism-rules file from the repo root, if it exists.
+// Returns the file content as a string, or an empty string if not found.
+export const fetchRepoRules = async (
+  owner: string,
+  repo: string,
+  ref: string,
+  installationId: number
+): Promise<string> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<string>(
+        `https://api.github.com/repos/${owner}/${repo}/contents/.prism-rules?ref=${ref}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github.v3.raw",
+          },
+          responseType: 'text',
+        }
+      ),
+      `fetchRepoRules:${owner}/${repo}`
+    );
+    const content = typeof response.data === 'string' ? response.data.trim() : '';
+    if (content) {
+      logger.info({ owner, repo }, "Loaded .prism-rules from repository");
+    }
+    return content;
+  } catch (err: unknown) {
+    const { status } = getAxiosErrorDetails(err);
+    // 404 is expected when the file doesn't exist — not an error.
+    if (status !== 404) {
+      const { message } = getAxiosErrorDetails(err);
+      logger.error({ owner, repo, status, message }, "Failed to fetch .prism-rules");
+    }
+    return '';
+  }
+};

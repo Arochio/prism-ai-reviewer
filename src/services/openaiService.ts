@@ -7,8 +7,10 @@ import { retrieveContext } from '../pipeline/retrieveContext';
 import { runBugPass } from '../pipeline/analyze/bugPass';
 import { runDesignPass } from '../pipeline/analyze/designPass';
 import { runPerformancePass } from '../pipeline/analyze/performancePass';
+import { runValidationPass } from '../pipeline/analyze/validationPass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
+import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
 import { logger } from './logger';
 import { retryWithBackoff } from '../utils/retry';
 
@@ -85,7 +87,7 @@ export const callOpenAI = async (systemPrompt: string, userContent: string): Pro
 };
 
 // Orchestrates the multi-pass analysis pipeline and returns a formatted PR review comment.
-export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number): Promise<string> => {
+export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, repoInfo: RepoInfo): Promise<string> => {
   const processedFiles = extractDiff(files);
 
   if (processedFiles.length === 0) {
@@ -106,14 +108,21 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number): P
     ? await retrieveContext(processedFiles)
     : processedFiles;
 
-  // Runs all three analysis passes in parallel to reduce total latency.
-  const [bugRaw, designRaw, performanceRaw] = await Promise.all([
-    runBugPass(enrichedFiles, callOpenAI),
-    runDesignPass(enrichedFiles, callOpenAI),
-    runPerformancePass(enrichedFiles, callOpenAI),
-  ]);
+  // Fetches full repository context (file tree + related file contents + custom rules).
+  const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
 
-  const ranked = rankFindings(bugRaw, designRaw, performanceRaw);
+  // Runs analysis passes sequentially to stay within TPM rate limits.
+  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, repoContext, customRules);
+  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, repoContext, customRules);
+  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, repoContext, customRules);
+
+  // Validates findings to filter false positives, duplicates, and speculative issues.
+  const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
+    bugRaw, designRaw, performanceRaw,
+    enrichedFiles, repoContext, customRules, callOpenAI
+  );
+
+  const ranked = rankFindings(bugValidated, designValidated, performanceValidated);
   const summary = generateSummary(ranked);
 
   if (openAIConfig.enableCache) {

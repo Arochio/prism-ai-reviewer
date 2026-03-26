@@ -2,28 +2,48 @@
 import type { ProcessedFile } from '../extractDiff';
 
 const PERFORMANCE_PASS_SYSTEM_PROMPT =
-  'You are a performance engineering expert. Analyze the provided file diffs exclusively for performance and efficiency issues.\n\n' +
+  'You are a performance engineering expert. You are given the full repository file tree, related source files for context, and the specific files that were changed in a pull request. ' +
+  'Analyze the changed files in the context of the full repository for performance and efficiency issues.\n\n' +
+  'Use the repository context to identify cross-file performance concerns — for example, if a changed function is called in a hot loop elsewhere in the codebase, or if new code duplicates work already done by an existing utility.\n\n' +
+  'SCOPE: Only report performance and efficiency issues. Do NOT report bugs, security vulnerabilities, or design/architecture concerns — those are handled by separate passes.\n\n' +
   'Cover:\n' +
   '- Algorithmic complexity: O(n\u00b2) or worse loops, redundant iterations, inefficient data structures\n' +
   '- I/O and concurrency: sequential awaits that could be parallelised, blocking synchronous calls in async paths\n' +
   '- Memory: large allocations inside loops, unbounded caches, object churn\n' +
-  '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n\n' +  'If a <past_user_feedback> section is present, use it to calibrate your severity ratings and focus areas. ' +
-  'Positive feedback means your approach was valued; negative feedback means you should adjust.\n\n' +  'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>: <concise description>`\n' +
+  '- Database / network: N+1 query patterns, missing pagination, chatty API calls\n' +
+  '- Duplication: re-implementing logic that already exists in the repo\n\n' +
+  'RULES:\n' +
+  '- Every finding MUST quote the exact code pattern that is inefficient (use backticks). If you cannot quote a real snippet from the provided code, do not report it.\n' +
+  '- If the code already mitigates a concern (caching, batching, concurrency limits, pagination, bounded inputs), do NOT flag it. Check for size caps, .slice() limits, and config bounds before reporting.\n' +
+  '- Only report issues with measurable impact at realistic scale. Do not flag micro-optimisations, theoretical concerns, or standard language idioms.\n' +
+  '- Do NOT report the same issue reported by another pass or duplicate a finding within your own output.\n' +
+  '- Prefer fewer, high-confidence findings over many speculative ones. When in doubt, do not report.\n\n' +
+  'SELF-CHECK — Before including any finding in your output, verify:\n' +
+  '1. Can I quote the exact code that is slow? If not, discard.\n' +
+  '2. Are the inputs actually unbounded, or are they already capped by config/limits/slice? If bounded, discard.\n' +
+  '3. Would this matter at the actual data sizes this code handles, or only at extreme theoretical scale? If the latter, discard.\n\n' +
+  'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
+  'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
+  'For each finding output exactly one bullet:\n' +
+  '`- [<severity>] <filename>:<line or function>: <description>. Problematic code: \`<exact snippet>\``\n' +
   'Severity must be one of: High, Medium, Low.\n' +
   'If no issues are found, respond with exactly: No performance findings.';
 
-const buildUserContent = (files: ProcessedFile[]): string =>
-  files
+const buildUserContent = (files: ProcessedFile[], repoContext: string, customRules: string): string => {
+  const changedSection = files
     .map((f) => `---\nFilename: ${f.filename}\nStatus: ${f.status}\n\n${f.content}${f.similarText}`)
     .join('\n\n');
+  return `${repoContext}${customRules}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
+};
 
 /*
  * Runs the performance analysis pass against the provided processed files.
  */
 export const runPerformancePass = async (
   files: ProcessedFile[],
-  callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>
+  callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>,
+  repoContext: string,
+  customRules: string
 ): Promise<string> => {
-  return callOpenAI(PERFORMANCE_PASS_SYSTEM_PROMPT, buildUserContent(files));
+  return callOpenAI(PERFORMANCE_PASS_SYSTEM_PROMPT, buildUserContent(files, repoContext, customRules));
 };

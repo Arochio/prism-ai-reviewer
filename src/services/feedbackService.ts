@@ -72,7 +72,7 @@ export const storeFeedback = async (record: FeedbackRecord): Promise<void> => {
 
 /*
  * Queries Pinecone for past feedback that is semantically similar to the given
- * code snippet. Returns a formatted context block for prompt injection.
+ * code snippet. Returns a formatted block of explicit rules derived from feedback.
  */
 export const retrieveFeedback = async (codeSnippet: string, topK = 3): Promise<string> => {
   try {
@@ -85,13 +85,26 @@ export const retrieveFeedback = async (codeSnippet: string, topK = 3): Promise<s
         const sentiment = String(r.metadata!['sentiment']);
         const review = String(r.metadata!['aiReviewSnippet'] || '').trim();
         const feedback = String(r.metadata!['userFeedback'] || '').trim();
-        const icon = sentiment === 'positive' ? '👍' : '👎';
-        return `${icon} Past review:\n${review}\nUser said: ${feedback || '(no explanation)'}`;
+        return { sentiment, review, feedback };
       });
 
     if (feedbackItems.length === 0) return '';
 
-    return `\n\n<past_user_feedback>\nThe following is real user feedback on similar past reviews. Adjust your tone, severity, and focus based on this feedback.\n\n${feedbackItems.join('\n\n---\n\n')}\n</past_user_feedback>`;
+    // Distill raw feedback into explicit do/don't rules.
+    const rules = feedbackItems.map((item) => {
+      if (item.sentiment === 'negative') {
+        if (item.feedback) {
+          return `- DO NOT: ${item.feedback} (The reviewer previously flagged: "${item.review.slice(0, 120)}" and the user rejected it.)`;
+        }
+        return `- DO NOT flag issues similar to: "${item.review.slice(0, 150)}" (user marked as unhelpful)`;
+      }
+      if (item.feedback) {
+        return `- DO: ${item.feedback} (The reviewer previously flagged: "${item.review.slice(0, 120)}" and the user valued it.)`;
+      }
+      return `- DO continue flagging issues similar to: "${item.review.slice(0, 150)}" (user marked as helpful)`;
+    });
+
+    return `\n\n<feedback_rules>\nThe following rules are derived from real user feedback on similar past reviews. These are mandatory — follow them strictly.\n\n${rules.join('\n')}\n</feedback_rules>`;
   } catch (err: unknown) {
     logger.error({
       message: getErrorMessage(err),

@@ -1,0 +1,17 @@
+# PRism Review Rules
+# ==================
+# Rules in this file are injected into every AI review pass as mandatory instructions.
+# The AI will follow these rules strictly and they override its default behavior.
+#
+# Write rules as plain statements — one per line.
+# Lines starting with # are comments and are ignored by the reviewer.
+# Blank lines are ignored.
+#
+# Examples:
+#   Never flag console.log usage in test files.
+#   We use camelCase for variables and PascalCase for types — do not flag this as inconsistent.
+#   All API endpoints must validate input with Zod — flag any that don't.
+#   Ignore minor naming suggestions — only flag names that are actively misleading.
+#
+# You can also set global rules (applied across all repos) via the
+# PRISM_GLOBAL_RULES environment variable in your .env file.
