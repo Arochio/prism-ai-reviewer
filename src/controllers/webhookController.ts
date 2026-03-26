@@ -246,6 +246,27 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     }));
 };
 
+// Generation-counter map for deduplicating concurrent async work on the same key.
+// Each new event for a key increments its generation; after the async work finishes,
+// results are only applied if the generation hasn't been superseded.
+const activeGenerations = new Map<string, number>();
+
+const nextGeneration = (key: string): number => {
+    const gen = (activeGenerations.get(key) ?? 0) + 1;
+    activeGenerations.set(key, gen);
+    return gen;
+};
+
+const isCurrentGeneration = (key: string, gen: number): boolean => {
+    return activeGenerations.get(key) === gen;
+};
+
+const clearGeneration = (key: string, gen: number): void => {
+    if (activeGenerations.get(key) === gen) {
+        activeGenerations.delete(key);
+    }
+};
+
 // Validates the webhook signature against the configured secret.
 const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -277,7 +298,8 @@ const validateInstallationId = (installation?: { id?: unknown }): number | null 
 };
 
 // Executes end-to-end PR analysis and posts summary plus inline comments.
-const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number) => {
+// Accepts a generation number so stale results from superseded events are discarded.
+const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number, dedupKey: string, generation: number) => {
     const { prData, files } = await fetchPRDetails(repoData.owner.login, repoData.name, prDataPayload.number, installationId);
 
     logger.info({ fileCount: files.length, prNumber: prDataPayload.number }, "Fetched files for PR analysis");
@@ -293,6 +315,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
     try {
         analysis = await analyzeFiles(files, prDataPayload.number, repoInfo);
     } catch (err: unknown) {
+        clearGeneration(dedupKey, generation);
         logger.error({
             prNumber: prDataPayload.number,
             repo: repoData.full_name,
@@ -301,6 +324,13 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         }, "AI analysis failed — skipping comment posting");
         throw err;
     }
+
+    // If a newer event arrived for this PR while we were analyzing, discard our results.
+    if (!isCurrentGeneration(dedupKey, generation)) {
+        logger.info({ prNumber: prDataPayload.number, generation }, "Analysis superseded by newer event — discarding");
+        return;
+    }
+    clearGeneration(dedupKey, generation);
 
     logger.info({ prNumber: prDataPayload.number, analysis }, "AI Review for PR");
 
@@ -375,7 +405,11 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
             return res.status(400).send("Missing or invalid installation.id");
         }
 
-        analyzeAndCommentOnPR(pr, repo, installationId).catch((err: unknown) => {
+        const dedupKey = `pr:${repo.full_name}#${pr.number}`;
+        const generation = nextGeneration(dedupKey);
+
+        analyzeAndCommentOnPR(pr, repo, installationId, dedupKey, generation).catch((err: unknown) => {
+            clearGeneration(dedupKey, generation);
             logger.error({
                 prNumber: pr.number,
                 repo: repo.full_name,
@@ -427,8 +461,14 @@ const handlePushEvent = (req: Request, res: Response) => {
         "Push event — starting ingestion"
     );
 
-    ingestPushChanges(repo.owner.login, repo.name, after, changes, installationId).catch(
+    const dedupKey = `push:${repo.full_name}:${branch}`;
+    const generation = nextGeneration(dedupKey);
+
+    ingestPushChanges(repo.owner.login, repo.name, after, changes, installationId).then(
+        () => { clearGeneration(dedupKey, generation); }
+    ).catch(
         (err: unknown) => {
+            clearGeneration(dedupKey, generation);
             logger.error({
                 repo: repo.full_name,
                 ref,
