@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import crypto from 'crypto';
 import { openAIConfig } from "../config/openai.config";
 import { storeEmbedding } from './vectorService';
 import { getCachedOpenAIResponse, setCachedOpenAIResponse } from "./cacheService";
@@ -21,19 +22,19 @@ const getErrorMessage = (error: unknown): string => {
   return "Unknown error";
 };
 
-// Builds a deterministic cache key from model settings and truncated file content.
+// Builds a deterministic cache key by hashing model settings and full file content.
 const buildCacheKey = (files: ProcessedFile[]): string => {
-  const fileKey = files
-    .map((file) => `${file.filename}:${file.content.slice(0, 128)}`)
-    .join("|");
-  return [
-    openAIConfig.model,
-    openAIConfig.maxTokens,
-    openAIConfig.temperature,
-    openAIConfig.fileContentSizeLimit,
-    openAIConfig.totalFilesLimit,
-    fileKey,
-  ].join("::");
+  const hash = crypto.createHash('sha256');
+  hash.update(openAIConfig.model);
+  hash.update(String(openAIConfig.maxTokens));
+  hash.update(String(openAIConfig.temperature));
+  hash.update(String(openAIConfig.fileContentSizeLimit));
+  hash.update(String(openAIConfig.totalFilesLimit));
+  for (const file of files) {
+    hash.update(file.filename);
+    hash.update(file.content);
+  }
+  return hash.digest('hex');
 };
 
 // Sends a single chat completion request to the OpenAI API using shared config.
