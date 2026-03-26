@@ -277,8 +277,6 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
 
     logger.info({ prNumber: prDataPayload.number, analysis }, "AI Review for PR");
 
-    // Post results independently so a comment failure doesn't lose the analysis
-    // or cause duplicate OpenAI calls on retry.
     try {
         await postPullRequestComment(
             repoData.owner.login,
@@ -292,26 +290,6 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
             prNumber: prDataPayload.number,
             message: getErrorMessage(err),
         }, "Failed to post PR summary comment");
-    }
-
-    try {
-        const inlineComments = buildInlineComments(files, analysis);
-
-        if (inlineComments.length > 0 && prData.head?.sha) {
-            await postPullRequestInlineComments(
-                repoData.owner.login,
-                repoData.name,
-                prDataPayload.number,
-                installationId,
-                prData.head.sha,
-                inlineComments
-            );
-        }
-    } catch (err: unknown) {
-        logger.error({
-            prNumber: prDataPayload.number,
-            message: getErrorMessage(err),
-        }, "Failed to post inline review comments");
     }
 };
 
@@ -370,19 +348,14 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
             return res.status(400).send("Missing or invalid installation.id");
         }
 
-        retryWithBackoff(
-            () => analyzeAndCommentOnPR(pr, repo, installationId),
-            3,
-            1000,
-            `PR #${pr.number} analysis`
-        ).catch((err: unknown) => {
+        analyzeAndCommentOnPR(pr, repo, installationId).catch((err: unknown) => {
             logger.error({
                 prNumber: pr.number,
                 repo: repo.full_name,
                 action,
                 message: getErrorMessage(err),
                 stack: getErrorStack(err),
-            }, "analyzeAndCommentOnPR failed after all retries");
+            }, "analyzeAndCommentOnPR failed");
         });
     }
 
