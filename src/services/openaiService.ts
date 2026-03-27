@@ -25,8 +25,9 @@ const getErrorMessage = (error: unknown): string => {
   return "Unknown error";
 };
 
-// Builds a deterministic cache key by hashing model settings and full file content.
-const buildCacheKey = (files: ProcessedFile[]): string => {
+// Builds a deterministic cache key by hashing model settings, file content, and all context
+// that influences the analysis output (repo context, custom rules, risk signals).
+const buildCacheKey = (files: ProcessedFile[], repoContext: string, customRules: string): string => {
   const hash = crypto.createHash('sha256');
   hash.update(openAIConfig.model);
   hash.update(String(openAIConfig.maxTokens));
@@ -37,6 +38,8 @@ const buildCacheKey = (files: ProcessedFile[]): string => {
     hash.update(file.filename);
     hash.update(file.content);
   }
+  hash.update(repoContext);
+  hash.update(customRules);
   return hash.digest('hex');
 };
 
@@ -92,15 +95,6 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     return { summary: "No files to analyze (bypassed due to large size or removed files).", suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
   }
 
-  const cacheKey = buildCacheKey(processedFiles);
-  if (openAIConfig.enableCache) {
-    // Returns early on cache hit to avoid duplicate OpenAI requests.
-    const cached = await getCachedOpenAIResponse(cacheKey);
-    if (cached) {
-      return { summary: cached, suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
-    }
-  }
-
   // Enriches files with vector similarity context before analysis passes.
   const enrichedFiles = openAIConfig.enableEmbeddings
     ? await retrieveContext(processedFiles)
@@ -109,8 +103,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Fetches full repository context (file tree + related file contents + custom rules).
   const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
 
-  // Computes PR risk score from git history — runs in parallel with nothing, but
-  // logically happens after we know which files are in the PR.
+  // Computes PR risk score from git history.
   const riskAssessment = await assessPRRisk(
     repoInfo.owner, repoInfo.repo,
     enrichedFiles.map((f) => f.filename),
@@ -122,6 +115,16 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     ? `\n\n<risk_signals>\nThe following risk signals were detected from git history analysis. Use these to calibrate your review intensity — pay extra attention to the areas highlighted below.\n\n${riskAssessment.signals.map((s) => `- ${s}`).join('\n')}\n</risk_signals>`
     : '';
   const augmentedRepoContext = repoContext + riskContext;
+
+  // Cache key now includes repo context, custom rules, and risk signals so that
+  // different repos / rule sets / risk states never share cached results.
+  const cacheKey = buildCacheKey(enrichedFiles, augmentedRepoContext, customRules);
+  if (openAIConfig.enableCache) {
+    const cached = await getCachedOpenAIResponse(cacheKey);
+    if (cached) {
+      return { summary: cached, suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
+    }
+  }
 
   // Runs analysis passes sequentially to stay within TPM rate limits.
   const bugRaw = await runBugPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
