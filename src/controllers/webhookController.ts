@@ -270,10 +270,11 @@ const clearGeneration = (key: string, gen: number): void => {
 };
 
 // Validates the webhook signature against the configured secret.
+// Rejects all requests when the secret is not configured — this is a hard requirement.
 const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
     if (!secret) {
-        logger.warn("GITHUB_WEBHOOK_SECRET is not set — webhook signature verification is disabled");
+        logger.error("GITHUB_WEBHOOK_SECRET is not set — all webhooks will be rejected. Set this variable to the webhook secret configured in your GitHub App.");
         return false;
     }
 

@@ -21,6 +21,10 @@ const validateOpenAIConfig = () => {
 
 validateOpenAIConfig();
 
+if (!process.env.GITHUB_WEBHOOK_SECRET) {
+  logger.error("GITHUB_WEBHOOK_SECRET is not set — all incoming webhooks will be rejected until this is configured.");
+}
+
 // Parses incoming webhook JSON payloads.
 app.use(express.json());
 
