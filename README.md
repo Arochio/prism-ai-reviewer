@@ -1,134 +1,97 @@
 # PRism AI Reviewer
 
-A GitHub webhook-based application that uses AI to automatically review pull requests.
+A GitHub App that uses AI to review pull requests — posting inline findings with fix suggestions directly on the diff.
 
-## About
+## How It Works
 
-This project is built by a software engineering student exploring AI tools. It integrates with GitHub webhooks to receive PR events, fetches PR data via the GitHub API, and performs repo-aware AI code reviews using OpenAI. Reviews are posted as comments directly on the PR.
+When a PR is opened or updated, PRism:
 
-## Features
+1. **Extracts the diff** and fetches related repo files for context
+2. **Assesses risk** using git history (file churn, author spread, PR size, timing)
+3. **Runs three analysis passes** — Bugs & Security, Design, Performance — then validates findings to remove false positives
+4. **Ranks findings** by severity and generates one-click fix suggestions
+5. **Posts results** as inline diff comments (each in its own thread) plus a summary comment
 
-- Receives GitHub webhook events for pull requests
-- Authenticates using a GitHub App
-- Fetches PR details, changed files, and existing reviews
-- **Repo-aware analysis** — fetches the full repository file tree and content of related source files so the AI understands how changes fit the wider codebase
-- Runs three parallel analysis passes: Bugs & Security, Design, and Performance
-- Posts AI-generated reviews as PR comments with inline suggestions
-- User feedback loop (`/prism-feedback 👍` / `👎`) stored as embeddings to calibrate future reviews
-- Configurable OpenAI settings (model, tokens, caching, file limits)
-- Bypasses large files to avoid token limits
-- Caches OpenAI responses via Redis for identical file sets
-- Generates OpenAI embeddings for each changed file
-- Stores embeddings in Pinecone vector database per PR and file
-- Queries for similar files from previous PRs and includes them in the AI prompt for richer, context-aware reviews
+On first PR for a new repo, PRism **bootstraps in the background** — scanning ~100 merged PRs to seed risk data and ingesting key files into the vector DB for RAG context.
 
-## Prerequisites
+## Key Features
 
-- Node.js (v18 or higher)
-- npm
-- A GitHub App with private key
+- **Multi-pass AI analysis** with false positive validation
+- **Git-history risk scoring** — churn, size, spread, timing signals injected into prompts
+- **Inline diff comments** with severity icons and threaded feedback
+- **One-click fix suggestions** as GitHub suggestion blocks
+- **RAG context** via Pinecone — similar code from past reviews enriches prompts
+- **Per-finding feedback** — reply `/prism-feedback 👍` or `/prism-feedback 👎 reason`
+- **Custom rules** via `.prism-rules` file in repo root
+- **Incremental ingestion** — push events update the vector DB automatically
+- **Redis caching** of AI responses for identical file sets
+- **Retroactive bootstrap** — seeds knowledge base from merged PR history
+
+## Setup
+
+### Prerequisites
+
+- Node.js v18+
+- A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) with PR read/write, Contents read, Issues read/write permissions
 - OpenAI API key
-- Pinecone account and API key (for vector database)
-- ngrok or similar tool for webhook tunneling
+- Pinecone index (dimension **1536**, metric **cosine**)
+- Redis (optional, for caching)
 
-## Installation
+### Install
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/Arochio/prism-ai-reviewer.git
-   cd prism-ai-reviewer
-   ```
+```bash
+git clone https://github.com/Arochio/prism-ai-reviewer.git
+cd prism-ai-reviewer
+npm install
+cp .env.example .env  # fill in your keys
+```
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+### Required Environment Variables
 
-3. Create a `.env` file based on the example:
-   ```bash
-   cp .env.example .env
-   ```
-   Then fill in the required values. See [`.env.example`](.env.example) for every available variable with defaults.
+| Variable | Description |
+|---|---|
+| `GITHUB_APP_ID` | GitHub App numeric ID |
+| `GITHUB_PRIVATE_KEY` | PEM private key (use `\n` for newlines) |
+| `GITHUB_WEBHOOK_SECRET` | Webhook secret from GitHub App settings |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `PINECONE_API_KEY` | Pinecone API key |
+| `PINECONE_INDEX_NAME` | Pinecone index name |
 
-   **Required variables:**
-   | Variable | Description |
-   |---|---|
-   | `GITHUB_APP_ID` | Your GitHub App's numeric ID |
-   | `GITHUB_PRIVATE_KEY` | PEM private key (use literal `\n` for newlines) |
-   | `GITHUB_WEBHOOK_SECRET` | Secret configured in GitHub webhook settings |
-   | `OPENAI_API_KEY` | OpenAI API key |
-   | `PINECONE_API_KEY` | Pinecone API key |
-   | `PINECONE_INDEX_NAME` | Pinecone index name (dimension **1536**, metric **cosine**) |
+For Redis, set `REDIS_URL` or `REDIS_HOST` + `REDIS_PORT`. See [`.env.example`](.env.example) for all optional tuning variables.
 
-   **Redis cache** (needed when `OPENAI_ENABLE_CACHE=true`):<br>
-   Set `REDIS_URL` (e.g. `redis://localhost:6379`) **or** `REDIS_HOST` + `REDIS_PORT` with optional `REDIS_USERNAME` / `REDIS_PASSWORD`. If both are set, `REDIS_URL` takes precedence. Use `rediss://` for TLS endpoints.
+### Run
 
-   **Optional tuning variables** (all have sensible defaults in `.env.example`):
-   | Variable | Default | Description |
-   |---|---|---|
-   | `PORT` | `3000` | Server listen port |
-   | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model ID |
-   | `OPENAI_MAX_TOKENS` | `1200` | Max tokens per completion |
-   | `OPENAI_TEMPERATURE` | `0.2` | Sampling temperature |
-   | `OPENAI_TOP_P` | `1` | Nucleus sampling |
-   | `OPENAI_N` | `1` | Number of completions |
-   | `OPENAI_FREQUENCY_PENALTY` | `0` | Frequency penalty |
-   | `OPENAI_PRESENCE_PENALTY` | `0` | Presence penalty |
-   | `OPENAI_FILE_CONTENT_SIZE_LIMIT` | `16000` | Max chars sent per file |
-   | `OPENAI_TOTAL_FILES_LIMIT` | `8` | Max changed files to analyze |
-   | `OPENAI_BYPASS_LARGE_FILES` | `true` | Skip files exceeding size limit |
-   | `OPENAI_ENABLE_CACHE` | `true` | Cache OpenAI responses in Redis |
-   | `OPENAI_CACHE_TTL_SECONDS` | `3600` | Redis cache TTL |
-   | `OPENAI_ENABLE_EMBEDDINGS` | `true` | Generate embeddings for RAG |
-   | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-   | `OPENAI_VECTOR_DB_TOP_K` | `5` | Similar vectors to retrieve |
-   | `REPO_CONTEXT_FILE_LIMIT` | `15` | Max related repo files fetched for context |
-   | `REPO_CONTEXT_SIZE_LIMIT` | `32000` | Max total chars of repo context |
+```bash
+npm run dev          # start dev server (hot reload)
+ngrok http 3000      # expose to internet
+```
 
-> **Pinecone setup**: Create a Pinecone index with **dimension 1536** and metric **cosine** (required for `text-embedding-3-small`). Any other dimension will cause a `PineconeBadRequestError` at runtime.
+Then configure your GitHub App webhook to point at `https://<ngrok-url>/webhook` with content type `application/json`.
 
-## Usage
+### GitHub App Events
 
-1. Start the development server:
-   ```bash
-   npm run dev
-   ```
+Subscribe to: **Pull requests**, **Push**, **Issue comments**, **Pull request review comments**
 
-2. Expose the local server to the internet using ngrok:
-   ```bash
-   ngrok http 3000
-   ```
+## Scripts
 
-3. In your GitHub repository settings, add a webhook:
-   - Payload URL: `https://your-ngrok-url.ngrok.io/webhook`
-   - Content type: `application/json`
-   - Secret: Your `GITHUB_WEBHOOK_SECRET`
-   - Events: Select "Pull requests"
+| Command | Description |
+|---|---|
+| `npm run dev` | Dev server with hot reload |
+| `npm run build` | Compile TypeScript |
+| `npm start` | Run compiled output |
+| `npm test` | Run tests (Vitest) |
+| `npm run lint` | Lint with ESLint |
+| `npm run ingest` | One-time full repo ingestion into Pinecone |
 
-4. Install the GitHub App on your repository.
+## Architecture
 
-5. Create or update a pull request in the repository to trigger the webhook. The app will automatically analyze the changed files and post an AI-generated review comment on the PR.
-
-## Configuration
-
-- **GitHub App Setup**: Create an app in GitHub Developer settings. Set permissions for Pull requests (read/write), Contents (read), and Issues (read/write). Subscribe to "Pull request" events.
-- **Environment Variables**: Copy `.env.example` to `.env` and fill in secrets. Ensure `.env` is not committed (it's already in `.gitignore`).
-- **Webhook Verification**: The app verifies webhook signatures for security.
-- **OpenAI Configuration**: Customize AI behavior via env vars (e.g., model selection, token limits, caching). Defaults are optimized for cost and performance.
-- **Repo Context**: The AI receives the full repository file tree and the content of the most relevant related source files alongside the changed files. Tune breadth with `REPO_CONTEXT_FILE_LIMIT` and total size with `REPO_CONTEXT_SIZE_LIMIT`.
-- **Redis Cache**: `OPENAI_ENABLE_CACHE=true` uses Redis. Configure with either `REDIS_URL` or `REDIS_HOST` + `REDIS_PORT` (with optional `REDIS_USERNAME`/`REDIS_PASSWORD`). Use `redis://` for non-TLS and `rediss://` for TLS. If Redis is unavailable, caching is automatically disabled and analysis still runs.
-- **Embeddings & Vector DB**: Set `OPENAI_ENABLE_EMBEDDINGS=true` to enable embedding generation and Pinecone storage. Each analyzed file's embedding is stored under the key `pr-{prNumber}-{filename}`. On subsequent PRs, similar files from past PRs are retrieved and included in the AI prompt. `OPENAI_VECTOR_DB_TOP_K` controls how many similar results are returned (default: 5).
-- **Feedback Loop**: Reply to any AI review comment with `/prism-feedback 👍` or `/prism-feedback 👎 explanation` to store feedback. Feedback is embedded and retrieved on future reviews of similar code to calibrate severity and focus.
-
-## Development
-
-- Run linter: `npm run lint`
-- The project uses TypeScript with `ts-node-dev` for hot reloading.
-
-## Contributing
-
-As a student project, contributions are welcome! Open issues for bugs or feature requests, or submit pull requests.
+```
+Webhook → Extract Diff → Retrieve RAG Context → Fetch Repo Context
+  → Assess PR Risk → [Bug Pass, Design Pass, Performance Pass]
+  → Validation Pass → Rank Findings → Generate Fixes
+  → Split Findings → Post Inline Comments + Summary
+```
 
 ## License
 
-This project is licensed under the ISC License.
+ISC
