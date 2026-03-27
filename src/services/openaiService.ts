@@ -11,6 +11,8 @@ import { runPerformancePass } from '../pipeline/analyze/performancePass';
 import { runValidationPass } from '../pipeline/analyze/validationPass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
+import { generateFixes, type CodeSuggestion } from '../pipeline/generateFixes';
+import { splitFindings, type InlineFinding, type SplitFindings } from '../pipeline/splitFindings';
 import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
 import { assessPRRisk } from './riskService';
 import { logger } from './logger';
@@ -74,12 +76,20 @@ export const callOpenAI = async (systemPrompt: string, userContent: string): Pro
   return result;
 };
 
+export interface AnalysisResult {
+  summary: string;
+  suggestions: CodeSuggestion[];
+  inlineFindings: InlineFinding[];
+  nonInlineResults: import('../pipeline/rankFindings').PassResult[];
+  recommendations: string[];
+}
+
 // Orchestrates the multi-pass analysis pipeline and returns a formatted PR review comment.
-export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, repoInfo: RepoInfo): Promise<string> => {
+export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, repoInfo: RepoInfo): Promise<AnalysisResult> => {
   const processedFiles = extractDiff(files);
 
   if (processedFiles.length === 0) {
-    return "No files to analyze (bypassed due to large size or removed files).";
+    return { summary: "No files to analyze (bypassed due to large size or removed files).", suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
   }
 
   const cacheKey = buildCacheKey(processedFiles);
@@ -87,7 +97,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     // Returns early on cache hit to avoid duplicate OpenAI requests.
     const cached = await getCachedOpenAIResponse(cacheKey);
     if (cached) {
-      return cached;
+      return { summary: cached, suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
     }
   }
 
@@ -127,6 +137,17 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   const ranked = rankFindings(bugValidated, designValidated, performanceValidated);
   const summary = generateSummary(ranked, riskAssessment.recommendations);
 
+  // Generate fix suggestions (best-effort — review still posts if this fails).
+  let suggestions: CodeSuggestion[] = [];
+  try {
+    suggestions = await generateFixes(ranked, enrichedFiles, callOpenAI);
+  } catch (err: unknown) {
+    logger.warn({ message: getErrorMessage(err) }, 'Fix suggestion generation failed — continuing without suggestions');
+  }
+
+  // Split findings into inline-eligible (posted on diff lines) and non-inline (kept in summary).
+  const { inline: inlineFindings, nonInline: nonInlineResults } = splitFindings(ranked, enrichedFiles, suggestions);
+
   if (openAIConfig.enableCache) {
     // Persists successful responses for subsequent identical requests.
     await setCachedOpenAIResponse(cacheKey, summary);
@@ -144,5 +165,5 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     }
   }
 
-  return summary;
+  return { summary, suggestions, inlineFindings, nonInlineResults, recommendations: riskAssessment.recommendations };
 };

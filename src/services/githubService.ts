@@ -26,6 +26,8 @@ export interface InlineReviewCommentInput {
   line: number;
   body: string;
   side?: "RIGHT" | "LEFT";
+  startLine?: number;
+  startSide?: "RIGHT" | "LEFT";
 }
 
 interface FetchPRDetailsResult {
@@ -524,6 +526,10 @@ export const postPullRequestInlineComments = async (
             line: comment.line,
             side: comment.side ?? "RIGHT",
             body: comment.body,
+            ...(comment.startLine !== undefined && {
+              start_line: comment.startLine,
+              start_side: comment.startSide ?? comment.side ?? "RIGHT",
+            }),
           })),
         },
         {
