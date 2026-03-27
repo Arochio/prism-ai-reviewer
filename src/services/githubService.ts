@@ -765,3 +765,101 @@ export const fetchFileCommitStats = async (
     })
   );
 };
+
+// Represents a recently merged PR with metadata used for retroactive scanning.
+export interface MergedPRSummary {
+  number: number;
+  title: string;
+  filesChanged: number;
+  additions: number;
+  deletions: number;
+  mergedAt: string;
+  author: string;
+  changedFiles: string[];
+}
+
+// Fetches recently merged PRs including their changed file lists.
+// Used by the bootstrap service to seed risk scoring data on first install.
+export const fetchMergedPRs = async (
+  owner: string,
+  repo: string,
+  installationId: number,
+  limit = 100,
+): Promise<MergedPRSummary[]> => {
+  const token = await getInstallationToken(installationId);
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+  };
+
+  const results: MergedPRSummary[] = [];
+  const perPage = Math.min(limit, 100);
+  let page = 1;
+
+  while (results.length < limit) {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<Array<{
+        number: number;
+        title: string;
+        changed_files: number;
+        additions: number;
+        deletions: number;
+        merged_at: string | null;
+        user: { login: string } | null;
+      }>>(
+        `https://api.github.com/repos/${owner}/${repo}/pulls`,
+        {
+          headers,
+          params: { state: 'closed', sort: 'updated', direction: 'desc', per_page: perPage, page },
+        },
+      ),
+      `fetchMergedPRs:${owner}/${repo}:page${page}`,
+    );
+
+    const prs = Array.isArray(response.data) ? response.data : [];
+    if (prs.length === 0) break;
+
+    for (const pr of prs) {
+      if (!pr.merged_at) continue; // closed but not merged — skip
+      if (results.length >= limit) break;
+      results.push({
+        number: pr.number,
+        title: pr.title,
+        filesChanged: pr.changed_files,
+        additions: pr.additions,
+        deletions: pr.deletions,
+        mergedAt: pr.merged_at,
+        author: pr.user?.login ?? 'unknown',
+        changedFiles: [], // populated below
+      });
+    }
+
+    page++;
+    // Safety: no more than 5 pages to cap API usage during bootstrap.
+    if (page > 5) break;
+  }
+
+  // Fetch changed file lists for each merged PR (capped to avoid rate limits).
+  const FILE_FETCH_LIMIT = 30;
+  const toEnrich = results.slice(0, FILE_FETCH_LIMIT);
+  await Promise.all(
+    toEnrich.map(async (pr) => {
+      try {
+        const resp = await withGitHubRateLimitRetry(
+          () => axios.get<Array<{ filename: string }>>(
+            `https://api.github.com/repos/${owner}/${repo}/pulls/${pr.number}/files`,
+            { headers, params: { per_page: 100 } },
+          ),
+          `fetchMergedPRFiles:${owner}/${repo}#${pr.number}`,
+        );
+        pr.changedFiles = Array.isArray(resp.data)
+          ? resp.data.map((f) => f.filename).filter((f): f is string => typeof f === 'string')
+          : [];
+      } catch {
+        // Non-blocking — we still have the aggregate counts.
+      }
+    }),
+  );
+
+  return results;
+};

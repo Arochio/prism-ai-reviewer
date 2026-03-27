@@ -7,6 +7,7 @@ import { formatInlineCommentBody } from "../pipeline/splitFindings";
 import type { RepoInfo } from "../pipeline/fetchRepoContext";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
 import { ingestPushChanges, type PushFileChange } from "../services/ingestionService";
+import { bootstrapRepo } from "../services/bootstrapService";
 import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
@@ -457,6 +458,14 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
                 installationId: payload.installation?.id,
             }, "Missing or invalid installation.id in webhook payload");
             return res.status(400).send("Missing or invalid installation.id");
+        }
+
+        // On first PR opened for this repo, bootstrap in background to seed
+        // risk scoring data and RAG context from merged PR history.
+        if (action === "opened") {
+            bootstrapRepo(repo.owner.login, repo.name, "HEAD", installationId).catch((err: unknown) => {
+                logger.warn({ repo: repo.full_name, message: getErrorMessage(err) }, "Background bootstrap failed");
+            });
         }
 
         const dedupKey = `pr:${repo.full_name}#${pr.number}`;
