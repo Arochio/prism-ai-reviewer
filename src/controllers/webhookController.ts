@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import crypto from "crypto";
 import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments, createPRComment, updatePRComment } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
+import { generateSummary } from "../pipeline/generateSummary";
+import { formatInlineCommentBody } from "../pipeline/splitFindings";
 import type { RepoInfo } from "../pipeline/fetchRepoContext";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
 import { ingestPushChanges, type PushFileChange } from "../services/ingestionService";
@@ -335,7 +337,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         installationId,
     };
 
-    let result: { summary: string; suggestions: import('../pipeline/generateFixes').CodeSuggestion[] };
+    let result: Awaited<ReturnType<typeof analyzeFiles>>;
     try {
         result = await analyzeFiles(files, prNumber, repoInfo);
     } catch (err: unknown) {
@@ -359,38 +361,45 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
     }
     clearGeneration(dedupKey, generation);
 
-    logger.info({ prNumber, summary: result.summary, suggestionCount: result.suggestions.length }, "AI Review for PR");
+    logger.info({
+        prNumber,
+        inlineCount: result.inlineFindings.length,
+        nonInlineCount: result.nonInlineResults.reduce((n, r) => n + r.findings.length, 0),
+        suggestionCount: result.suggestions.length,
+    }, "AI Review for PR");
 
-    // Append suggestion count hint to the summary so authors know to look for inline fixes.
-    let analysis = result.summary;
-    if (result.suggestions.length > 0) {
-        analysis += `\n\n---\n💡 **${result.suggestions.length}** fix suggestion${result.suggestions.length > 1 ? 's' : ''} posted as inline comments.`;
+    // Post each inline-eligible finding as its own review comment on the relevant diff line.
+    // Each becomes its own thread so users can reply with per-finding feedback.
+    if (result.inlineFindings.length > 0) {
+        try {
+            const inlineComments = result.inlineFindings.map((f) => ({
+                path: f.path,
+                line: f.fix ? f.fix.endLine : f.line,
+                ...(f.fix && f.fix.startLine !== f.fix.endLine && { startLine: f.fix.startLine }),
+                side: "RIGHT" as const,
+                body: formatInlineCommentBody(f),
+            }));
+            await postPullRequestInlineComments(owner, repo, prNumber, installationId, prData.head.sha, inlineComments);
+            logger.info({ prNumber, count: inlineComments.length }, "Inline finding comments posted");
+        } catch (err: unknown) {
+            logger.warn({ prNumber, message: getErrorMessage(err) }, "Failed to post inline findings — falling back to summary-only");
+        }
     }
 
+    // Build lightweight summary: inline findings removed, only non-inline + counts.
+    const summaryBody = generateSummary(
+        result.nonInlineResults,
+        result.recommendations,
+        result.inlineFindings.length,
+    );
+
     try {
-        await updateOrPost(`### AI Review\n\n${analysis}`);
+        await updateOrPost(`### AI Review\n\n${summaryBody}`);
     } catch (err: unknown) {
         logger.error({
             prNumber,
             message: getErrorMessage(err),
         }, "Failed to post PR summary comment");
-    }
-
-    // Post one-click fix suggestions as inline PR review comments.
-    if (result.suggestions.length > 0) {
-        try {
-            const inlineComments = result.suggestions.map((s) => ({
-                path: s.path,
-                line: s.endLine,
-                ...(s.startLine !== s.endLine && { startLine: s.startLine }),
-                side: "RIGHT" as const,
-                body: `🔧 **Suggested fix**\n> ${s.finding.replace(/`[^`]*`/g, '').replace(/\s+/g, ' ').trim().slice(0, 200)}\n\n\`\`\`suggestion\n${s.suggestedCode}\n\`\`\``,
-            }));
-            await postPullRequestInlineComments(owner, repo, prNumber, installationId, prData.head.sha, inlineComments);
-            logger.info({ prNumber, count: inlineComments.length }, "Inline fix suggestions posted");
-        } catch (err: unknown) {
-            logger.warn({ prNumber, message: getErrorMessage(err) }, "Failed to post inline suggestions — summary was still posted");
-        }
     }
 };
 
