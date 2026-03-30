@@ -162,6 +162,138 @@ describe('assessCodeValue', () => {
     });
   });
 
+  describe('complexityScore — cyclomatic signals (Option 3)', () => {
+    it('detects branch keywords in added diff lines', () => {
+      const file = makeFile({
+        patch: '@@ -0,0 +1,3 @@\n+if (a) {\n+  for (let i = 0; i < n; i++) {}\n+}',
+        content: 'const x = 1;',
+      });
+      expect(assessCodeValue([file], noRanked).complexityScore).toBeGreaterThan(0);
+    });
+
+    it('does not count branch keywords in removed diff lines', () => {
+      const withAdded = makeFile({
+        patch: '@@ -0,0 +1,2 @@\n+if (a) {}\n+for (let i = 0; i < n; i++) {}',
+        content: 'const x = 1;',
+      });
+      const withRemoved = makeFile({
+        patch: '@@ -1,2 +0,0 @@\n-if (a) {}\n-for (let i = 0; i < n; i++) {}',
+        content: 'const x = 1;',
+      });
+      expect(assessCodeValue([withAdded], noRanked).complexityScore).toBeGreaterThan(
+        assessCodeValue([withRemoved], noRanked).complexityScore,
+      );
+    });
+
+    it('counts && || ?? logical operators as decision points', () => {
+      const file = makeFile({
+        patch: '@@ -0,0 +1,3 @@\n+const a = x && y;\n+const b = p || q;\n+const c = v ?? w;',
+        content: 'const x = 1;',
+      });
+      expect(assessCodeValue([file], noRanked).complexityScore).toBeGreaterThan(0);
+    });
+
+    it('more branch points yield a higher score than fewer', () => {
+      const fewBranches = makeFile({
+        patch: '@@ -0,0 +1,1 @@\n+if (a) {}',
+        content: 'const x = 1;',
+      });
+      const manyBranches = makeFile({
+        patch: '@@ -0,0 +1,5 @@\n+if (a) {}\n+while (b) {}\n+for (i) {}\n+x && y\n+p || q',
+        content: 'const x = 1;',
+      });
+      expect(assessCodeValue([manyBranches], noRanked).complexityScore).toBeGreaterThan(
+        assessCodeValue([fewBranches], noRanked).complexityScore,
+      );
+    });
+  });
+
+  describe('complexityScore — line-weighted average (Option 1)', () => {
+    it('large simple file dilutes complexity score of a small branchy file', () => {
+      const smallBranchy = makeFile({
+        filename: 'complex.ts',
+        patch: '@@ -0,0 +1,2 @@\n+if (a) {}\n+while (x) {}',
+        content: 'const x = 1;',
+      });
+      const largeSimple = makeFile({
+        filename: 'simple.ts',
+        patch: patchWithLines(200),
+        content: 'const x = 1;',
+      });
+      const branchyOnly = assessCodeValue([smallBranchy], noRanked).complexityScore;
+      const mixed = assessCodeValue([smallBranchy, largeSimple], noRanked).complexityScore;
+      expect(mixed).toBeLessThan(branchyOnly);
+    });
+
+    it('two equally-sized files average their individual scores', () => {
+      const fileA = makeFile({
+        filename: 'a.ts',
+        patch: '@@ -0,0 +1,10 @@\n' + Array(10).fill('+if (a) {}').join('\n'),
+        content: 'const x = 1;',
+      });
+      const fileB = makeFile({
+        filename: 'b.ts',
+        patch: patchWithLines(10), // no branches
+        content: 'const x = 1;',
+      });
+      const aOnly = assessCodeValue([fileA], noRanked).complexityScore;
+      const mixed = assessCodeValue([fileA, fileB], noRanked).complexityScore;
+      // Mixed should be lower than fileA alone (fileB brings it down)
+      expect(mixed).toBeLessThan(aOnly);
+    });
+  });
+
+  describe('complexityScore — findings bonus (Option 4)', () => {
+    const makeRanked = (findings: string[]): PassResult[] => [
+      { label: 'Bugs & Security', raw: findings.join('\n'), findings },
+    ];
+
+    it('Critical findings give a higher bonus than Low', () => {
+      const file = makeFile();
+      const withCritical = makeRanked(['- [Critical] file.ts:L1: issue.']);
+      const withLow = makeRanked(['- [Low] file.ts:L1: issue.']);
+      expect(assessCodeValue([file], withCritical).complexityScore).toBeGreaterThan(
+        assessCodeValue([file], withLow).complexityScore,
+      );
+    });
+
+    it('multiple findings accumulate in the bonus', () => {
+      const file = makeFile();
+      const oneHigh = makeRanked(['- [High] file.ts:L1: issue.']);
+      const threeHigh = makeRanked([
+        '- [High] file.ts:L1: issue.',
+        '- [High] file.ts:L2: issue.',
+        '- [High] file.ts:L3: issue.',
+      ]);
+      expect(assessCodeValue([file], threeHigh).complexityScore).toBeGreaterThan(
+        assessCodeValue([file], oneHigh).complexityScore,
+      );
+    });
+
+    it('empty findings list contributes no bonus', () => {
+      const file = makeFile();
+      const noFindings = makeRanked([]);
+      expect(assessCodeValue([file], noFindings).complexityScore).toBe(
+        assessCodeValue([file], noRanked).complexityScore,
+      );
+    });
+
+    it('findings from multiple passes are all counted', () => {
+      const file = makeFile();
+      const onePass: PassResult[] = [
+        { label: 'Bugs & Security', raw: '- [High] a.ts:L1: x.', findings: ['- [High] a.ts:L1: x.'] },
+      ];
+      const threePasses: PassResult[] = [
+        { label: 'Bugs & Security', raw: '- [High] a.ts:L1: x.', findings: ['- [High] a.ts:L1: x.'] },
+        { label: 'Design', raw: '- [High] b.ts:L1: y.', findings: ['- [High] b.ts:L1: y.'] },
+        { label: 'Performance', raw: '- [High] c.ts:L1: z.', findings: ['- [High] c.ts:L1: z.'] },
+      ];
+      expect(assessCodeValue([file], threePasses).complexityScore).toBeGreaterThan(
+        assessCodeValue([file], onePass).complexityScore,
+      );
+    });
+  });
+
   describe('codeValue formula', () => {
     it('equals 40% quantity + 60% complexity (rounded)', () => {
       const files = [makeFile({ patch: patchWithLines(50), content: 'await Promise.all([a]);' })];

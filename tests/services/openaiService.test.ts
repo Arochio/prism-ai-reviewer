@@ -54,6 +54,9 @@ vi.mock('../../src/services/logger', () => ({
 vi.mock('../../src/services/developerProfileService', () => ({
   updateDeveloperProfile: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../../src/services/reviewerSuggestionService', () => ({
+  suggestReviewers: vi.fn().mockResolvedValue(''),
+}));
 
 import { callOpenAI } from '../../src/services/openaiService';
 import OpenAI, { APIError } from 'openai';

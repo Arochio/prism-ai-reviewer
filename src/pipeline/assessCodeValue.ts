@@ -16,9 +16,29 @@ export interface CodeValueResult {
 const countAddedLines = (patch: string): number =>
   patch.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
 
-// Scores the algorithmic and structural complexity of source content on a 0-100 scale.
-// Each signal is detected once per file (presence, not frequency) to avoid inflation.
-const scoreContentComplexity = (content: string): number => {
+// Scores cyclomatic-style complexity from added diff lines only.
+// Counts branch/decision points actually introduced by the change, not pre-existing code.
+const scoreCyclomaticFromPatch = (patch: string): number => {
+  const addedLines = patch
+    .split('\n')
+    .filter((l) => l.startsWith('+') && !l.startsWith('+++'));
+
+  let points = 0;
+  const branchRe = /\b(if|for|foreach|while|do|switch|case|catch)\b/gi;
+  const logicalRe = /&&|\|\||\?\?/g;
+
+  for (const line of addedLines) {
+    points += (line.match(branchRe) ?? []).length;
+    points += (line.match(logicalRe) ?? []).length;
+  }
+
+  // 30 decision points ≈ ceiling; above that is still very high complexity.
+  return Math.min(100, Math.round((points / 30) * 100));
+};
+
+// Scores keyword-based domain complexity signals against file content.
+// Covers algorithmic, concurrency, type-level, and domain patterns.
+const scoreKeywordComplexity = (content: string): number => {
   const lower = content.toLowerCase();
   let score = 0;
 
@@ -64,7 +84,29 @@ const scoreContentComplexity = (content: string): number => {
   return Math.min(100, score);
 };
 
-export const assessCodeValue = (files: ProcessedFile[], _ranked: PassResult[]): CodeValueResult => {
+// Severity weights used to convert AI findings into a complexity proxy.
+const SEVERITY_WEIGHTS: Record<string, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
+// Derives a complexity bonus (0-20) from AI pass findings.
+// More severe and numerous findings indicate harder-to-review code.
+const scoreFindingsSeverity = (ranked: PassResult[]): number => {
+  let total = 0;
+  for (const pass of ranked) {
+    for (const finding of pass.findings) {
+      const match = finding.match(/^\s*-\s*\[(\w+)\]/i);
+      total += SEVERITY_WEIGHTS[match?.[1]?.toLowerCase() ?? ''] ?? 0;
+    }
+  }
+  // 20 cumulative severity points → max bonus (e.g. 5 High findings = 15 pts).
+  return Math.min(20, Math.round((total / 20) * 20));
+};
+
+export const assessCodeValue = (files: ProcessedFile[], ranked: PassResult[]): CodeValueResult => {
   const filesChanged = files.length;
 
   // Sum added lines across all file patches.
@@ -75,11 +117,17 @@ export const assessCodeValue = (files: ProcessedFile[], _ranked: PassResult[]): 
     ? 0
     : Math.min(100, Math.round((Math.log10(linesAdded + 1) / 3) * 100));
 
-  // Complexity: average per-file heuristic score.
-  const perFileComplexity = files.map((f) => scoreContentComplexity(f.content));
-  const avgComplexity = perFileComplexity.length > 0
-    ? perFileComplexity.reduce((a, b) => a + b, 0) / perFileComplexity.length
-    : 0;
+  // Complexity: line-weighted per-file average so large files dominate over trivial ones.
+  // Each file blends cyclomatic (diff-accurate, 60%) + keyword signals (domain, 40%).
+  const lineWeights = files.map((f) => Math.max(1, countAddedLines(f.patch)));
+  const totalWeight = lineWeights.reduce((a, b) => a + b, 0);
+  const perFileBase = files.length === 0 ? 0 : Math.round(
+    files.reduce((sum, f, i) => {
+      const cyclomatic = scoreCyclomaticFromPatch(f.patch);
+      const keyword = scoreKeywordComplexity(f.content);
+      return sum + (cyclomatic * 0.6 + keyword * 0.4) * lineWeights[i];
+    }, 0) / totalWeight
+  );
 
   // Bonus for changes spanning multiple directories (cross-cutting work).
   const dirs = new Set(
@@ -94,7 +142,10 @@ export const assessCodeValue = (files: ProcessedFile[], _ranked: PassResult[]): 
   const exts = new Set(files.map((f) => f.filename.split('.').pop()?.toLowerCase() ?? ''));
   const langBonus = exts.size > 1 ? Math.min(10, (exts.size - 1) * 5) : 0;
 
-  const complexityScore = Math.min(100, Math.round(avgComplexity + spreadBonus + langBonus));
+  // Bonus from AI finding severity — harder code tends to attract more severe findings.
+  const findingsBonus = scoreFindingsSeverity(ranked);
+
+  const complexityScore = Math.min(100, Math.round(perFileBase + spreadBonus + langBonus + findingsBonus));
 
   // Final code value weights complexity more heavily than raw volume.
   const codeValue = Math.round(quantityScore * 0.4 + complexityScore * 0.6);

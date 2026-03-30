@@ -17,6 +17,7 @@ import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
 import { assessPRRisk } from './riskService';
 import { assessCodeValue } from '../pipeline/assessCodeValue';
 import { updateDeveloperProfile } from './developerProfileService';
+import { suggestReviewers } from './reviewerSuggestionService';
 import { logger } from './logger';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -185,12 +186,22 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Silently compute code value and update the developer's Pinecone profile.
   // Non-blocking — any failure is caught inside updateDeveloperProfile.
   if (author) {
-    const repoFullName = `${repoInfo.owner}/${repoInfo.repo}`;
     const codeValue = assessCodeValue(enrichedFiles, ranked);
     updateDeveloperProfile(author, repoFullName, prNumber, codeValue, enrichedFiles, ranked).catch(() => {
       // already logged inside service
     });
   }
 
-  return { summary, suggestions, inlineFindings, nonInlineResults, recommendations: riskAssessment.recommendations };
+  // Append reviewer suggestion based on accumulated developer profiles.
+  // Non-blocking — an empty string is returned on any failure or insufficient data.
+  let reviewerSuggestion = '';
+  if (author) {
+    try {
+      reviewerSuggestion = await suggestReviewers(repoFullName, author, enrichedFiles);
+    } catch {
+      // logged inside suggestReviewers
+    }
+  }
+
+  return { summary: summary + reviewerSuggestion, suggestions, inlineFindings, nonInlineResults, recommendations: riskAssessment.recommendations };
 };
