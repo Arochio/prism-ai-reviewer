@@ -29,7 +29,7 @@ export const retrieveContext = async (files: ProcessedFile[]): Promise<Processed
         if (similar.length > 0) {
           // Builds a RAG context block from stored filename + content snippets.
           const contextBlocks = similar
-            .filter((s) => s.metadata?.['filename'] && s.metadata?.['type'] !== 'feedback')
+            .filter((s) => s.metadata?.['filename'] && s.metadata?.['type'] !== 'feedback' && s.metadata?.['type'] !== 'developer-profile')
             .map((s) => {
               const name = String(s.metadata!['filename']);
               const snippet = String(s.metadata!['content'] || '').trim();

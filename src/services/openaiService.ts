@@ -12,7 +12,7 @@ import { runValidationPass } from '../pipeline/analyze/validationPass';
 import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { generateFixes, type CodeSuggestion } from '../pipeline/generateFixes';
-import { splitFindings, type InlineFinding, type SplitFindings } from '../pipeline/splitFindings';
+import { splitFindings, type InlineFinding } from '../pipeline/splitFindings';
 import { fetchRepoContext, type RepoInfo } from '../pipeline/fetchRepoContext';
 import { assessPRRisk } from './riskService';
 import { assessCodeValue } from '../pipeline/assessCodeValue';
@@ -158,14 +158,20 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     await setCachedOpenAIResponse(cacheKey, summary);
   }
 
-  // Stores embeddings with truncated content for RAG retrieval on future PRs.
-  // Content is capped at 2000 chars to stay within Pinecone's 40KB metadata limit.
+  // Stores embeddings for RAG retrieval on future PRs.
+  // Uses a stable per-file ID (repo:owner/repo:path) so repeated reviews of the same
+  // file upsert in place rather than accumulating a new vector on every PR.
+  // Line-number prefixes added by extractDiff are stripped before storing so the
+  // metadata content stays consistent with what push ingestion writes.
+  const repoFullName = `${repoInfo.owner}/${repoInfo.repo}`;
   for (const file of enrichedFiles) {
     if (file.embedding) {
-      await storeEmbedding(`pr-${prNumber}-${file.filename}`, file.embedding, {
-        prNumber,
+      const rawContent = file.content.replace(/^\d+ \| /gm, '').slice(0, 2000);
+      await storeEmbedding(`repo:${repoFullName}:${file.filename}`, file.embedding, {
         filename: file.filename,
-        content: file.content.slice(0, 2000),
+        content: rawContent,
+        source: 'pr-review',
+        repo: repoFullName,
       });
     }
   }
