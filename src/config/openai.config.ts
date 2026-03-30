@@ -1,5 +1,9 @@
 export interface OpenAIConfig {
-  model: string;
+  model: string;           // default model for all passes unless overridden
+  bugPassModel: string;    // model for the bug/security analysis pass
+  designPassModel: string; // model for the design/architecture pass
+  performancePassModel: string; // model for the performance pass
+  validationPassModel: string;  // model for the validation/filter pass
   maxTokens: number;
   temperature: number;
   topP: number;
@@ -20,6 +24,10 @@ import { parseNumClamped, parseIntClamped, parseBool, sanitizeModel } from '../u
 
 const defaultConfig: OpenAIConfig = {
   model: "gpt-4o-mini",
+  bugPassModel: "gpt-4o",        // stronger model — catches edge-case logic and security bugs
+  designPassModel: "gpt-4o-mini",
+  performancePassModel: "gpt-4o-mini",
+  validationPassModel: "gpt-4o-mini",
   maxTokens: 1200,
   temperature: 0.2,
   topP: 1,
@@ -38,6 +46,10 @@ const defaultConfig: OpenAIConfig = {
 
 const envConfig: Partial<OpenAIConfig> = {
   model: sanitizeModel(process.env.OPENAI_MODEL),
+  bugPassModel: sanitizeModel(process.env.OPENAI_BUG_PASS_MODEL),
+  designPassModel: sanitizeModel(process.env.OPENAI_DESIGN_PASS_MODEL),
+  performancePassModel: sanitizeModel(process.env.OPENAI_PERFORMANCE_PASS_MODEL),
+  validationPassModel: sanitizeModel(process.env.OPENAI_VALIDATION_PASS_MODEL),
   maxTokens: parseIntClamped(process.env.OPENAI_MAX_TOKENS, 1, 128_000),
   temperature: parseNumClamped(process.env.OPENAI_TEMPERATURE, 0, 2),
   topP: parseNumClamped(process.env.OPENAI_TOP_P, 0, 1),
