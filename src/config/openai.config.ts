@@ -24,7 +24,7 @@ import { parseNumClamped, parseIntClamped, parseBool, sanitizeModel } from '../u
 
 const defaultConfig: OpenAIConfig = {
   model: "gpt-4o-mini",
-  bugPassModel: "gpt-4o",        // stronger model — catches edge-case logic and security bugs
+  bugPassModel: "gpt-4.1",        // stronger model — catches edge-case logic and security bugs
   designPassModel: "gpt-4o-mini",
   performancePassModel: "gpt-4o-mini",
   validationPassModel: "gpt-4o-mini",
