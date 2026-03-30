@@ -47,11 +47,11 @@ const buildCacheKey = (files: ProcessedFile[], repoContext: string, customRules:
 
 // Sends a single chat completion request to the OpenAI API using shared config.
 // The OpenAI SDK handles retries (2 by default) and rate-limit backoff automatically.
-export const callOpenAI = async (systemPrompt: string, userContent: string): Promise<string> => {
+export const callOpenAI = async (systemPrompt: string, userContent: string, model?: string): Promise<string> => {
   let result: string | null;
   try {
     const completion = await openai.chat.completions.create({
-      model: openAIConfig.model,
+      model: model ?? openAIConfig.model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
@@ -128,15 +128,21 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     }
   }
 
+  // Per-pass callers — each binds its configured model so passes run with the right capability/cost tradeoff.
+  const bugCaller        = (sys: string, user: string) => callOpenAI(sys, user, openAIConfig.bugPassModel);
+  const designCaller     = (sys: string, user: string) => callOpenAI(sys, user, openAIConfig.designPassModel);
+  const performanceCaller = (sys: string, user: string) => callOpenAI(sys, user, openAIConfig.performancePassModel);
+  const validationCaller = (sys: string, user: string) => callOpenAI(sys, user, openAIConfig.validationPassModel);
+
   // Runs analysis passes sequentially to stay within TPM rate limits.
-  const bugRaw = await runBugPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
-  const designRaw = await runDesignPass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
-  const performanceRaw = await runPerformancePass(enrichedFiles, callOpenAI, augmentedRepoContext, customRules);
+  const bugRaw = await runBugPass(enrichedFiles, bugCaller, augmentedRepoContext, customRules);
+  const designRaw = await runDesignPass(enrichedFiles, designCaller, augmentedRepoContext, customRules);
+  const performanceRaw = await runPerformancePass(enrichedFiles, performanceCaller, augmentedRepoContext, customRules);
 
   // Validates findings to filter false positives, duplicates, and speculative issues.
   const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
     bugRaw, designRaw, performanceRaw,
-    enrichedFiles, augmentedRepoContext, customRules, callOpenAI
+    enrichedFiles, augmentedRepoContext, customRules, validationCaller
   );
 
   const ranked = rankFindings(bugValidated, designValidated, performanceValidated);
