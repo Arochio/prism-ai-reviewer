@@ -8,6 +8,7 @@ import type { RepoInfo } from "../pipeline/fetchRepoContext";
 import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService";
 import { ingestPushChanges, type PushFileChange } from "../services/ingestionService";
 import { bootstrapRepo } from "../services/bootstrapService";
+import { updateReviewCoverage } from "../services/reviewDepthService";
 import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
@@ -62,6 +63,22 @@ interface PullRequestReviewCommentPayload {
     };
     pull_request: {
         number: number;
+    };
+    repository: WebhookRepository;
+    installation?: { id?: number };
+}
+
+interface PullRequestReviewPayload {
+    action: string;
+    review: {
+        id: number;
+        state: string;
+        submitted_at: string;
+        user: { login: string };
+    };
+    pull_request: {
+        number: number;
+        created_at: string;
     };
     repository: WebhookRepository;
     installation?: { id?: number };
@@ -137,6 +154,26 @@ const isValidPRReviewCommentPayload = (body: unknown): body is PullRequestReview
 
     const pullRequest = b.pull_request as Record<string, unknown> | undefined;
     if (!pullRequest || typeof pullRequest.number !== 'number') return false;
+
+    const repo = b.repository as Record<string, unknown> | undefined;
+    if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
+    if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidPRReviewPayload = (body: unknown): body is PullRequestReviewPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const review = b.review as Record<string, unknown> | undefined;
+    if (!review || typeof review.id !== 'number' || typeof review.state !== 'string') return false;
+    if (!review.user || typeof (review.user as Record<string, unknown>).login !== 'string') return false;
+    if (typeof review.submitted_at !== 'string') return false;
+
+    const pr = b.pull_request as Record<string, unknown> | undefined;
+    if (!pr || typeof pr.number !== 'number' || typeof pr.created_at !== 'string') return false;
 
     const repo = b.repository as Record<string, unknown> | undefined;
     if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
@@ -341,7 +378,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
 
     let result: Awaited<ReturnType<typeof analyzeFiles>>;
     try {
-        result = await analyzeFiles(files, prNumber, repoInfo);
+        result = await analyzeFiles(files, prNumber, repoInfo, prDataPayload.user.login);
     } catch (err: unknown) {
         clearGeneration(dedupKey, generation);
         logger.error({
@@ -486,6 +523,48 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
+// Handles pull_request_review webhook events to update review coverage on the Prism comment.
+const handlePullRequestReviewEvent = (req: Request, res: Response) => {
+    if (!isValidPRReviewPayload(req.body)) {
+        return res.status(422).send("Invalid pull_request_review payload");
+    }
+    const payload = req.body;
+
+    // Only react to newly submitted reviews, not edits or dismissals.
+    if (payload.action !== 'submitted') {
+        return res.sendStatus(200);
+    }
+
+    const installationId = validateInstallationId(payload.installation);
+    if (!installationId) {
+        logger.error({ repo: payload.repository.full_name, prNumber: payload.pull_request.number }, "pull_request_review event missing installation.id");
+        return res.status(400).send("Missing or invalid installation.id");
+    }
+
+    const { repository: repo, pull_request: pr, review } = payload;
+
+    logger.info(
+        { prNumber: pr.number, repo: repo.full_name, reviewer: review.user.login, state: review.state },
+        "Review submitted — updating coverage"
+    );
+
+    updateReviewCoverage(
+        repo.owner.login,
+        repo.name,
+        pr.number,
+        pr.created_at,
+        installationId,
+    ).catch((err: unknown) => {
+        logger.error({
+            prNumber: pr.number,
+            repo: repo.full_name,
+            message: getErrorMessage(err),
+        }, "Review coverage update failed");
+    });
+
+    return res.sendStatus(200);
+};
+
 // Handles push webhook events for incremental vector DB ingestion.
 const handlePushEvent = (req: Request, res: Response) => {
     if (!isValidPushPayload(req.body)) {
@@ -559,6 +638,8 @@ export const handleWebhook = (req: Request, res: Response) => {
             return handleIssueCommentEvent(req, res);
         case "pull_request_review_comment":
             return handlePullRequestReviewCommentEvent(req, res);
+        case "pull_request_review":
+            return handlePullRequestReviewEvent(req, res);
         case "pull_request":
             return handlePullRequestEvent(req, res);
         default:
