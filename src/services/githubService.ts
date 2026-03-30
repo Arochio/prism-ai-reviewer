@@ -863,3 +863,135 @@ export const fetchMergedPRs = async (
 
   return results;
 };
+
+// --- Review depth helpers ---
+
+export interface PRReview {
+  id: number;
+  user: { login: string };
+  state: string;         // APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING
+  submitted_at: string;
+}
+
+// Fetches all submitted reviews for a PR.
+export const fetchPRReviews = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  installationId: number,
+): Promise<PRReview[]> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<PRReview[]>(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/reviews`,
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+          params: { per_page: 100 },
+        },
+      ),
+      `fetchPRReviews:${owner}/${repo}#${prNumber}`,
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  } catch (err: unknown) {
+    const { status, message } = getAxiosErrorDetails(err);
+    logger.error({ owner, repo, prNumber, status, message }, 'Failed to fetch PR reviews');
+    return [];
+  }
+};
+
+export interface PRReviewComment {
+  id: number;
+  pull_request_review_id: number;
+  user: { login: string };
+  path: string;
+  body: string;
+}
+
+// Fetches all inline review comments (diff comments) for a PR.
+export const fetchPRReviewComments = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  installationId: number,
+): Promise<PRReviewComment[]> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<PRReviewComment[]>(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/comments`,
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+          params: { per_page: 100 },
+        },
+      ),
+      `fetchPRReviewComments:${owner}/${repo}#${prNumber}`,
+    );
+    return Array.isArray(response.data) ? response.data : [];
+  } catch (err: unknown) {
+    const { status, message } = getAxiosErrorDetails(err);
+    logger.error({ owner, repo, prNumber, status, message }, 'Failed to fetch PR review comments');
+    return [];
+  }
+};
+
+// Fetches just the filenames changed in a PR (lightweight — no content).
+export const fetchPRFilenames = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  installationId: number,
+): Promise<string[]> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<Array<{ filename: string }>>(
+        `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`,
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+          params: { per_page: 100 },
+        },
+      ),
+      `fetchPRFilenames:${owner}/${repo}#${prNumber}`,
+    );
+    return Array.isArray(response.data)
+      ? response.data.map((f) => f.filename).filter((f): f is string => typeof f === 'string')
+      : [];
+  } catch (err: unknown) {
+    const { status, message } = getAxiosErrorDetails(err);
+    logger.error({ owner, repo, prNumber, status, message }, 'Failed to fetch PR filenames');
+    return [];
+  }
+};
+
+// Finds the PRism summary comment on a PR by matching its well-known header.
+// Returns the comment id and current body, or null if not found.
+export const findPrismSummaryComment = async (
+  owner: string,
+  repo: string,
+  prNumber: number,
+  installationId: number,
+): Promise<{ id: number; body: string } | null> => {
+  const token = await getInstallationToken(installationId);
+  try {
+    const response = await withGitHubRateLimitRetry(
+      () => axios.get<Array<{ id: number; body?: string }>>(
+        `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments`,
+        {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+          params: { per_page: 100 },
+        },
+      ),
+      `findPrismSummaryComment:${owner}/${repo}#${prNumber}`,
+    );
+    const comments = Array.isArray(response.data) ? response.data : [];
+    const prismComment = comments.find((c) => typeof c.body === 'string' && c.body.startsWith('### AI Review'));
+    return prismComment
+      ? { id: prismComment.id, body: prismComment.body as string }
+      : null;
+  } catch (err: unknown) {
+    const { status, message } = getAxiosErrorDetails(err);
+    logger.error({ owner, repo, prNumber, status, message }, 'Failed to find Prism summary comment');
+    return null;
+  }
+};

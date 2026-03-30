@@ -92,6 +92,3 @@ Webhook → Extract Diff → Retrieve RAG Context → Fetch Repo Context
   → Split Findings → Post Inline Comments + Summary
 ```
 
-## License
-
-ISC
