@@ -30,7 +30,7 @@ const scoreContentComplexity = (content: string): number => {
     [/\b(graph|trie|avl|red.?black|b.?tree)\b/, 10],
 
     // Async / concurrency primitives
-    [/\bPromise\.(all|race|allSettled|any)\b/, 8],
+    [/\bpromise\.(all|race|allsettled|any)\b/, 8],
     [/\b(mutex|semaphore|atomic|rwlock|spin.?lock)\b/, 10],
     [/\b(worker_thread|cluster\.fork|child_process)\b/, 8],
 
@@ -88,7 +88,7 @@ export const assessCodeValue = (files: ProcessedFile[], _ranked: PassResult[]): 
       return idx > 0 ? f.filename.slice(0, idx) : '(root)';
     })
   );
-  const spreadBonus = Math.min(20, (dirs.size - 1) * 5);
+  const spreadBonus = Math.max(0, Math.min(20, (dirs.size - 1) * 5));
 
   // Bonus for multi-language changes.
   const exts = new Set(files.map((f) => f.filename.split('.').pop()?.toLowerCase() ?? ''));
