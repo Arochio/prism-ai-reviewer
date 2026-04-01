@@ -42,7 +42,7 @@ export const parseFeedbackCommand = (body: string): { sentiment: FeedbackSentime
  * The embedding is based on the AI review snippet so similar future reviews
  * can retrieve relevant past feedback.
  */
-export const storeFeedback = async (record: FeedbackRecord): Promise<void> => {
+export const storeFeedback = async (record: FeedbackRecord, installationId?: number): Promise<void> => {
   try {
     const textToEmbed = `${record.aiReviewSnippet}\n\nUser feedback (${record.sentiment}): ${record.userFeedback}`;
     const embedding = await createEmbedding(textToEmbed);
@@ -55,7 +55,7 @@ export const storeFeedback = async (record: FeedbackRecord): Promise<void> => {
       aiReviewSnippet: record.aiReviewSnippet.slice(0, 1500),
       userFeedback: record.userFeedback.slice(0, 500),
       timestamp: new Date().toISOString(),
-    });
+    }, installationId);
 
     logger.info({
       commentId: record.commentId,
@@ -74,10 +74,10 @@ export const storeFeedback = async (record: FeedbackRecord): Promise<void> => {
  * Queries Pinecone for past feedback that is semantically similar to the given
  * code snippet. Returns a formatted block of explicit rules derived from feedback.
  */
-export const retrieveFeedback = async (codeSnippet: string, topK = 3): Promise<string> => {
+export const retrieveFeedback = async (codeSnippet: string, topK = 3, installationId?: number): Promise<string> => {
   try {
     const embedding = await createEmbedding(codeSnippet);
-    const results = await querySimilar(embedding, topK);
+    const results = await querySimilar(embedding, topK, installationId);
 
     const feedbackItems = results
       .filter((r) => r.metadata?.['type'] === 'feedback')

@@ -5,6 +5,7 @@ dotenv.config();
 import express from "express";
 import { handleWebhook } from "./controllers/webhookController";
 import { openAIConfig } from "./config/openai.config";
+import { getPool } from "./db/connection";
 import { logger } from "./services/logger";
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +24,22 @@ const validateStartupConfig = async () => {
   }
   if (!process.env.GITHUB_PRIVATE_KEY) errors.push("GITHUB_PRIVATE_KEY is required");
   if (!process.env.GITHUB_WEBHOOK_SECRET) errors.push("GITHUB_WEBHOOK_SECRET is required — all webhooks will be rejected without it");
+
+  // --- PostgreSQL (required for installation tracking) ---
+  if (process.env.DATABASE_URL) {
+    try {
+      const pool = getPool();
+      const client = await pool.connect();
+      await client.query("SELECT 1");
+      client.release();
+      logger.info("PostgreSQL connection verified");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      errors.push(`PostgreSQL connection failed: ${msg}`);
+    }
+  } else {
+    warnings.push("DATABASE_URL not set — installation tracking and billing features disabled");
+  }
 
   // --- Pinecone (required for embeddings + feedback) ---
   if (openAIConfig.enableEmbeddings) {

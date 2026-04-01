@@ -9,6 +9,17 @@ import { parseFeedbackCommand, storeFeedback } from "../services/feedbackService
 import { ingestPushChanges, type PushFileChange } from "../services/ingestionService";
 import { bootstrapRepo } from "../services/bootstrapService";
 import { updateReviewCoverage } from "../services/reviewDepthService";
+import {
+    upsertInstallation,
+    getInstallationByGithubId,
+    suspendInstallation,
+    unsuspendInstallation,
+    deleteInstallation,
+    updateInstallationPlan,
+    logMarketplaceEvent,
+    createReviewEvent,
+    completeReviewEvent,
+} from "../services/installationService";
 import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
@@ -95,6 +106,37 @@ interface PushPayload {
     after: string;
     commits: PushCommit[];
     repository: WebhookRepository;
+    installation?: { id?: number };
+}
+
+interface InstallationPayload {
+    action: string;
+    installation: {
+        id: number;
+        account: {
+            login: string;
+            id: number;
+            type: string;
+        };
+        app_id: number;
+    };
+    repositories?: Array<{ full_name: string }>;
+}
+
+interface MarketplacePurchasePayload {
+    action: string;
+    marketplace_purchase: {
+        account: {
+            id: number;
+            login: string;
+            type: string;
+        };
+        plan: {
+            id: number;
+            name: string;
+            slug?: string;
+        };
+    };
     installation?: { id?: number };
 }
 
@@ -191,6 +233,37 @@ const isValidPushPayload = (body: unknown): body is PushPayload => {
     const repo = b.repository as Record<string, unknown> | undefined;
     if (!repo || typeof repo.name !== 'string' || typeof repo.full_name !== 'string') return false;
     if (!repo.owner || typeof (repo.owner as Record<string, unknown>).login !== 'string') return false;
+
+    return true;
+};
+
+const isValidInstallationPayload = (body: unknown): body is InstallationPayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const inst = b.installation as Record<string, unknown> | undefined;
+    if (!inst || typeof inst.id !== 'number') return false;
+
+    const account = inst.account as Record<string, unknown> | undefined;
+    if (!account || typeof account.login !== 'string' || typeof account.id !== 'number' || typeof account.type !== 'string') return false;
+
+    return true;
+};
+
+const isValidMarketplacePurchasePayload = (body: unknown): body is MarketplacePurchasePayload => {
+    if (typeof body !== 'object' || body === null) return false;
+    const b = body as Record<string, unknown>;
+    if (typeof b.action !== 'string') return false;
+
+    const mp = b.marketplace_purchase as Record<string, unknown> | undefined;
+    if (!mp) return false;
+
+    const account = mp.account as Record<string, unknown> | undefined;
+    if (!account || typeof account.id !== 'number' || typeof account.login !== 'string') return false;
+
+    const plan = mp.plan as Record<string, unknown> | undefined;
+    if (!plan || typeof plan.name !== 'string') return false;
 
     return true;
 };
@@ -477,7 +550,7 @@ const handlePullRequestReviewCommentEvent = (req: Request, res: Response) => {
 };
 
 // Handles pull_request webhook events for AI review.
-const handlePullRequestEvent = (req: Request, res: Response) => {
+const handlePullRequestEvent = async (req: Request, res: Response) => {
     if (!isValidPRPayload(req.body)) {
         return res.status(422).send("Invalid pull_request payload");
     }
@@ -497,6 +570,13 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
             return res.status(400).send("Missing or invalid installation.id");
         }
 
+        // Gate: ensure this installation is active in our database.
+        const installation = await getInstallationByGithubId(installationId).catch(() => null);
+        if (installation && installation.status !== "active") {
+            logger.warn({ installationId, status: installation.status }, "Webhook from non-active installation");
+            return res.status(200).send("Installation not active");
+        }
+
         // On first PR opened for this repo, bootstrap in background to seed
         // risk scoring data and RAG context from merged PR history.
         if (action === "opened") {
@@ -508,8 +588,17 @@ const handlePullRequestEvent = (req: Request, res: Response) => {
         const dedupKey = `pr:${repo.full_name}#${pr.number}`;
         const generation = nextGeneration(dedupKey);
 
-        analyzeAndCommentOnPR(pr, repo, installationId, dedupKey, generation).catch((err: unknown) => {
+        // Track this review event in the database.
+        const dbInstallation = installation ?? await getInstallationByGithubId(installationId).catch(() => null);
+        const reviewEventId = dbInstallation
+            ? await createReviewEvent(dbInstallation.id, repo.full_name, pr.number, "pr_review").catch(() => null)
+            : null;
+
+        analyzeAndCommentOnPR(pr, repo, installationId, dedupKey, generation).then(() => {
+            if (reviewEventId) completeReviewEvent(reviewEventId, "completed").catch(() => {});
+        }).catch((err: unknown) => {
             clearGeneration(dedupKey, generation);
+            if (reviewEventId) completeReviewEvent(reviewEventId, "failed", { error: getErrorMessage(err) }).catch(() => {});
             logger.error({
                 prNumber: pr.number,
                 repo: repo.full_name,
@@ -566,7 +655,7 @@ const handlePullRequestReviewEvent = (req: Request, res: Response) => {
 };
 
 // Handles push webhook events for incremental vector DB ingestion.
-const handlePushEvent = (req: Request, res: Response) => {
+const handlePushEvent = async (req: Request, res: Response) => {
     if (!isValidPushPayload(req.body)) {
         return res.status(422).send("Invalid push payload");
     }
@@ -583,6 +672,13 @@ const handlePushEvent = (req: Request, res: Response) => {
     if (!installationId) {
         logger.error({ ref, repo: repo.full_name }, "Push event missing installation.id");
         return res.status(400).send("Missing or invalid installation.id");
+    }
+
+    // Gate: ensure this installation is active in our database.
+    const installation = await getInstallationByGithubId(installationId).catch(() => null);
+    if (installation && installation.status !== "active") {
+        logger.warn({ installationId, status: installation.status }, "Push from non-active installation");
+        return res.status(200).send("Installation not active");
     }
 
     // Aggregate file changes across all commits in this push.
@@ -623,6 +719,106 @@ const handlePushEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
+// Handles installation lifecycle events (created, deleted, suspend, unsuspend).
+const handleInstallationEvent = async (req: Request, res: Response) => {
+    if (!isValidInstallationPayload(req.body)) {
+        return res.status(422).send("Invalid installation payload");
+    }
+    const { action, installation: inst } = req.body;
+    const { id: githubInstallId, account } = inst;
+
+    logger.info({ action, githubInstallId, account: account.login }, "Installation event received");
+
+    try {
+        switch (action) {
+            case "created":
+                await upsertInstallation({
+                    githubInstallId,
+                    accountLogin: account.login,
+                    accountType: account.type,
+                    accountId: account.id,
+                });
+                break;
+            case "deleted":
+                await deleteInstallation(githubInstallId);
+                break;
+            case "suspend":
+                await suspendInstallation(githubInstallId);
+                break;
+            case "unsuspend":
+                await unsuspendInstallation(githubInstallId);
+                break;
+            default:
+                logger.info({ action, githubInstallId }, "Unhandled installation action");
+        }
+    } catch (err: unknown) {
+        logger.error({ action, githubInstallId, message: getErrorMessage(err) }, "Installation event handling failed");
+    }
+
+    return res.sendStatus(200);
+};
+
+// Handles marketplace_purchase events for plan changes.
+const handleMarketplacePurchaseEvent = async (req: Request, res: Response) => {
+    if (!isValidMarketplacePurchasePayload(req.body)) {
+        return res.status(422).send("Invalid marketplace_purchase payload");
+    }
+    const { action, marketplace_purchase: mp } = req.body;
+    const { account, plan } = mp;
+    const planSlug = plan.slug ?? plan.name.toLowerCase().replace(/\s+/g, "-");
+
+    logger.info({ action, account: account.login, plan: plan.name }, "Marketplace event received");
+
+    // Log every marketplace event for reconciliation.
+    await logMarketplaceEvent(action, account.id, plan, req.body).catch((err: unknown) => {
+        logger.error({ action, message: getErrorMessage(err) }, "Failed to log marketplace event");
+    });
+
+    try {
+        switch (action) {
+            case "purchased": {
+                // Upsert in case installation event hasn't arrived yet.
+                const installationId = validateInstallationId(req.body.installation);
+                if (installationId) {
+                    await upsertInstallation({
+                        githubInstallId: installationId,
+                        accountLogin: account.login,
+                        accountType: account.type ?? "Organization",
+                        accountId: account.id,
+                        planSlug,
+                        planName: plan.name,
+                    });
+                } else {
+                    // No installation ID in payload — try to find by account and update plan.
+                    logger.warn({ account: account.login }, "marketplace_purchase.purchased without installation.id");
+                }
+                break;
+            }
+            case "changed": {
+                // Plan upgrade/downgrade — find the installation by account and update.
+                const installationId = validateInstallationId(req.body.installation);
+                if (installationId) {
+                    await updateInstallationPlan(installationId, planSlug, plan.name);
+                }
+                break;
+            }
+            case "cancelled": {
+                const installationId = validateInstallationId(req.body.installation);
+                if (installationId) {
+                    await updateInstallationPlan(installationId, "free", "Free");
+                }
+                break;
+            }
+            default:
+                logger.info({ action }, "Marketplace action logged but no state change applied");
+        }
+    } catch (err: unknown) {
+        logger.error({ action, account: account.login, message: getErrorMessage(err) }, "Marketplace event handling failed");
+    }
+
+    return res.sendStatus(200);
+};
+
 // Webhook entry point — verifies signature and routes to event-specific handlers.
 export const handleWebhook = (req: Request, res: Response) => {
     if (!verifyWebhookSignature(req)) {
@@ -642,6 +838,10 @@ export const handleWebhook = (req: Request, res: Response) => {
             return handlePullRequestReviewEvent(req, res);
         case "pull_request":
             return handlePullRequestEvent(req, res);
+        case "installation":
+            return handleInstallationEvent(req, res);
+        case "marketplace_purchase":
+            return handleMarketplacePurchaseEvent(req, res);
         default:
             return res.status(200).send("Event ignored");
     }

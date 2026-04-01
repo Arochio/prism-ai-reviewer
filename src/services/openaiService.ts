@@ -100,7 +100,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
 
   // Enriches files with vector similarity context before analysis passes.
   const enrichedFiles = openAIConfig.enableEmbeddings
-    ? await retrieveContext(processedFiles)
+    ? await retrieveContext(processedFiles, repoInfo.installationId)
     : processedFiles;
 
   // Fetches full repository context (file tree + related file contents + custom rules).
@@ -123,7 +123,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // different repos / rule sets / risk states never share cached results.
   const cacheKey = buildCacheKey(enrichedFiles, augmentedRepoContext, customRules);
   if (openAIConfig.enableCache) {
-    const cached = await getCachedOpenAIResponse(cacheKey);
+    const cached = await getCachedOpenAIResponse(cacheKey, repoInfo.installationId);
     if (cached) {
       return { summary: cached, suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
     }
@@ -162,7 +162,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
 
   if (openAIConfig.enableCache) {
     // Persists successful responses for subsequent identical requests.
-    await setCachedOpenAIResponse(cacheKey, summary);
+    await setCachedOpenAIResponse(cacheKey, summary, repoInfo.installationId);
   }
 
   // Stores embeddings for RAG retrieval on future PRs.
@@ -179,7 +179,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
         content: rawContent,
         source: 'pr-review',
         repo: repoFullName,
-      });
+      }, repoInfo.installationId);
     }
   }
 

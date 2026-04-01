@@ -123,7 +123,7 @@ export const ingestPushChanges = async (
           content: truncated,
           source: 'push-ingestion',
           repo: `${owner}/${repo}`,
-        });
+        }, installationId);
         stats.indexed++;
         logger.info({ filePath }, 'Indexed file');
       } catch (err: unknown) {
