@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import crypto from 'crypto';
 import { openAIConfig } from "../config/openai.config";
+import { getPlan } from "../config/plans";
 import { storeEmbedding } from './vectorService';
 import { getCachedOpenAIResponse, setCachedOpenAIResponse } from "./cacheService";
 import { extractDiff, type AnalyzableFile, type ProcessedFile } from '../pipeline/extractDiff';
@@ -98,20 +99,26 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
     return { summary: "No files to analyze (bypassed due to large size or removed files).", suggestions: [], inlineFindings: [], nonInlineResults: [], recommendations: [] };
   }
 
+  const planFeatures = getPlan(repoInfo.planSlug ?? 'free').features;
+
   // Enriches files with vector similarity context before analysis passes.
-  const enrichedFiles = openAIConfig.enableEmbeddings
+  const enrichedFiles = openAIConfig.enableEmbeddings && planFeatures.ragContext
     ? await retrieveContext(processedFiles, repoInfo.installationId)
     : processedFiles;
 
   // Fetches full repository context (file tree + related file contents + custom rules).
-  const { repoContext, customRules } = await fetchRepoContext(repoInfo, enrichedFiles);
+  const { repoContext, customRules: rawCustomRules } = await fetchRepoContext(repoInfo, enrichedFiles);
+  // Custom rules are a paid feature — strip them for plans that don't include it.
+  const customRules = planFeatures.customRules ? rawCustomRules : '';
 
   // Computes PR risk score from git history.
-  const riskAssessment = await assessPRRisk(
-    repoInfo.owner, repoInfo.repo,
-    enrichedFiles.map((f) => f.filename),
-    repoInfo.installationId
-  );
+  const riskAssessment = planFeatures.riskScoring
+    ? await assessPRRisk(
+        repoInfo.owner, repoInfo.repo,
+        enrichedFiles.map((f) => f.filename),
+        repoInfo.installationId
+      )
+    : { signals: [], recommendations: [] };
 
   // Inject risk signals into the context so analysis passes are more thorough in risky areas.
   const riskContext = riskAssessment.signals.length > 0
@@ -137,8 +144,12 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
 
   // Runs analysis passes sequentially to stay within TPM rate limits.
   const bugRaw = await runBugPass(enrichedFiles, bugCaller, augmentedRepoContext, customRules);
-  const designRaw = await runDesignPass(enrichedFiles, designCaller, augmentedRepoContext, customRules);
-  const performanceRaw = await runPerformancePass(enrichedFiles, performanceCaller, augmentedRepoContext, customRules);
+  const designRaw: string = planFeatures.designPass
+    ? await runDesignPass(enrichedFiles, designCaller, augmentedRepoContext, customRules)
+    : '';
+  const performanceRaw: string = planFeatures.performancePass
+    ? await runPerformancePass(enrichedFiles, performanceCaller, augmentedRepoContext, customRules)
+    : '';
 
   // Validates findings to filter false positives, duplicates, and speculative issues.
   const { bugValidated, designValidated, performanceValidated } = await runValidationPass(
@@ -151,10 +162,12 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
 
   // Generate fix suggestions (best-effort — review still posts if this fails).
   let suggestions: CodeSuggestion[] = [];
-  try {
-    suggestions = await generateFixes(ranked, enrichedFiles, callOpenAI);
-  } catch (err: unknown) {
-    logger.warn({ message: getErrorMessage(err) }, 'Fix suggestion generation failed — continuing without suggestions');
+  if (planFeatures.fixSuggestions) {
+    try {
+      suggestions = await generateFixes(ranked, enrichedFiles, callOpenAI);
+    } catch (err: unknown) {
+      logger.warn({ message: getErrorMessage(err) }, 'Fix suggestion generation failed — continuing without suggestions');
+    }
   }
 
   // Split findings into inline-eligible (posted on diff lines) and non-inline (kept in summary).
@@ -195,7 +208,7 @@ export const analyzeFiles = async (files: AnalyzableFile[], prNumber: number, re
   // Append reviewer suggestion based on accumulated developer profiles.
   // Non-blocking — an empty string is returned on any failure or insufficient data.
   let reviewerSuggestion = '';
-  if (author) {
+  if (author && planFeatures.reviewerSuggestions) {
     try {
       reviewerSuggestion = await suggestReviewers(repoFullName, author, enrichedFiles);
     } catch {

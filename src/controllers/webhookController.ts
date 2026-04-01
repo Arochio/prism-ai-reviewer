@@ -20,6 +20,7 @@ import {
     createReviewEvent,
     completeReviewEvent,
 } from "../services/installationService";
+import { checkAndIncrementUsage } from "../services/usageService";
 import { logger } from "../services/logger";
 
 interface WebhookPullRequest {
@@ -413,10 +414,25 @@ const validateInstallationId = (installation?: { id?: unknown }): number | null 
 
 // Executes end-to-end PR analysis and posts summary plus inline comments.
 // Accepts a generation number so stale results from superseded events are discarded.
-const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number, dedupKey: string, generation: number) => {
+const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number, dedupKey: string, generation: number, planSlug: string, dbInstallationId: number | null) => {
     const owner = repoData.owner.login;
     const repo = repoData.name;
     const prNumber = prDataPayload.number;
+
+    // Enforce monthly review limit before touching OpenAI.
+    if (dbInstallationId !== null) {
+        const usageCheck = await checkAndIncrementUsage(dbInstallationId, planSlug).catch((): { allowed: boolean; reason?: string } => ({ allowed: true }));
+        if (!usageCheck.allowed) {
+            logger.warn({ installationId, planSlug, prNumber }, "Review blocked — usage limit reached");
+            await postPullRequestComment(
+                owner, repo, prNumber,
+                `⚠️ **Prism AI** — ${usageCheck.reason ?? "Monthly review limit reached."} Upgrade your plan to continue receiving reviews.`,
+                installationId,
+            ).catch(() => {});
+            clearGeneration(dedupKey, generation);
+            return;
+        }
+    }
 
     // Post a placeholder comment so the author knows review is in progress.
     let commentId: number | undefined;
@@ -447,6 +463,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         repo,
         headSha: prData.head.sha,
         installationId,
+        planSlug,
     };
 
     let result: Awaited<ReturnType<typeof analyzeFiles>>;
@@ -594,7 +611,10 @@ const handlePullRequestEvent = async (req: Request, res: Response) => {
             ? await createReviewEvent(dbInstallation.id, repo.full_name, pr.number, "pr_review").catch(() => null)
             : null;
 
-        analyzeAndCommentOnPR(pr, repo, installationId, dedupKey, generation).then(() => {
+        const planSlug = dbInstallation?.planSlug ?? 'free';
+        const dbInstallationId = dbInstallation?.id ?? null;
+
+        analyzeAndCommentOnPR(pr, repo, installationId, dedupKey, generation, planSlug, dbInstallationId).then(() => {
             if (reviewEventId) completeReviewEvent(reviewEventId, "completed").catch(() => {});
         }).catch((err: unknown) => {
             clearGeneration(dedupKey, generation);
