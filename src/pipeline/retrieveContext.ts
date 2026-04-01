@@ -14,10 +14,10 @@ const getErrorMessage = (error: unknown): string => {
  * Generates embeddings for each file and attaches semantically similar filenames
  * previously stored in the vector index. Failures are non-blocking per file.
  */
-export const retrieveContext = async (files: ProcessedFile[]): Promise<ProcessedFile[]> => {
+export const retrieveContext = async (files: ProcessedFile[], installationId?: number): Promise<ProcessedFile[]> => {
   // Retrieve feedback once using a combined snippet of all file contents.
   const combinedSnippet = files.map((f) => f.content.slice(0, 500)).join('\n');
-  const feedbackContext = await retrieveFeedback(combinedSnippet);
+  const feedbackContext = await retrieveFeedback(combinedSnippet, 3, installationId);
 
   return Promise.all(
     files.map(async (file) => {
@@ -25,7 +25,7 @@ export const retrieveContext = async (files: ProcessedFile[]): Promise<Processed
       let similarText = '';
       try {
         embedding = await createEmbedding(file.content);
-        const similar = await querySimilar(embedding, openAIConfig.vectorDbTopK);
+        const similar = await querySimilar(embedding, openAIConfig.vectorDbTopK, installationId);
         if (similar.length > 0) {
           // Builds a RAG context block from stored filename + content snippets.
           const contextBlocks = similar

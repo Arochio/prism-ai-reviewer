@@ -45,16 +45,16 @@ const shouldSkipPath = (filePath: string): boolean =>
   );
 
 // Checks if a repo has already been bootstrapped.
-export const isBootstrapped = async (owner: string, repo: string): Promise<boolean> => {
+export const isBootstrapped = async (owner: string, repo: string, installationId?: number): Promise<boolean> => {
   const key = `${BOOTSTRAP_KEY_PREFIX}${owner}/${repo}`;
-  const cached = await getCachedOpenAIResponse(key);
+  const cached = await getCachedOpenAIResponse(key, installationId);
   return cached !== null;
 };
 
 // Marks a repo as bootstrapped. TTL is 30 days — after that, a re-bootstrap can occur.
-const markBootstrapped = async (owner: string, repo: string): Promise<void> => {
+const markBootstrapped = async (owner: string, repo: string, installationId?: number): Promise<void> => {
   const key = `${BOOTSTRAP_KEY_PREFIX}${owner}/${repo}`;
-  await setCachedOpenAIResponse(key, JSON.stringify({ bootstrappedAt: new Date().toISOString() }));
+  await setCachedOpenAIResponse(key, JSON.stringify({ bootstrappedAt: new Date().toISOString() }), installationId);
 };
 
 // Scores a file tree entry for ingestion priority. Higher = more important.
@@ -172,7 +172,7 @@ export const bootstrapRepo = async (
   const repoKey = `${owner}/${repo}`;
 
   // Already bootstrapped?
-  if (await isBootstrapped(owner, repo)) {
+  if (await isBootstrapped(owner, repo, installationId)) {
     logger.debug({ repo: repoKey }, 'Repo already bootstrapped — skipping');
     return;
   }
@@ -230,7 +230,7 @@ export const bootstrapRepo = async (
       logger.error({ repo: repoKey, message: err instanceof Error ? err.message : 'Unknown error' },
         'Failed to fetch file contents during bootstrap');
       // Still mark as bootstrapped so we don't retry endlessly.
-      await markBootstrapped(owner, repo);
+      await markBootstrapped(owner, repo, installationId);
       return;
     }
 
@@ -254,7 +254,7 @@ export const bootstrapRepo = async (
             content: truncated,
             source: 'bootstrap',
             repo: `${owner}/${repo}`,
-          });
+          }, installationId);
           indexed++;
         } catch (err: unknown) {
           failed++;
@@ -269,6 +269,6 @@ export const bootstrapRepo = async (
   }
 
   // Step 5: Mark repo as bootstrapped.
-  await markBootstrapped(owner, repo);
+  await markBootstrapped(owner, repo, installationId);
   logger.info({ repo: repoKey }, 'Repo bootstrap complete');
 };

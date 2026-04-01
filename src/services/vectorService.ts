@@ -29,10 +29,14 @@ export const createEmbedding = async (text: string): Promise<number[]> => {
 
 // Persists embedding vectors for similarity lookups.
 // Storage failures are non-blocking and logged only.
-export const storeEmbedding = async (id: string, vector: number[], metadata: RecordMetadata): Promise<void> => {
+// When installationId is provided, it is stored as metadata for tenant isolation.
+export const storeEmbedding = async (id: string, vector: number[], metadata: RecordMetadata, installationId?: number): Promise<void> => {
   try {
+    const enrichedMetadata = installationId
+      ? { ...metadata, installationId }
+      : metadata;
     const index = pinecone.index(process.env.PINECONE_INDEX_NAME!);
-    await index.upsert({ records: [{ id, values: vector, metadata }] });
+    await index.upsert({ records: [{ id, values: vector, metadata: enrichedMetadata }] });
   } catch (err: unknown) {
     logger.error({
       id,
@@ -43,10 +47,14 @@ export const storeEmbedding = async (id: string, vector: number[], metadata: Rec
 
 // Queries nearest vectors for contextual similarity.
 // Query failures return an empty result to avoid blocking analysis.
-export const querySimilar = async (vector: number[], topK: number = openAIConfig.vectorDbTopK): Promise<{ metadata?: RecordMetadata }[]> => {
+// When installationId is provided, results are filtered to that tenant.
+export const querySimilar = async (vector: number[], topK: number = openAIConfig.vectorDbTopK, installationId?: number): Promise<{ metadata?: RecordMetadata }[]> => {
   try {
     const index = pinecone.index(process.env.PINECONE_INDEX_NAME!);
-    const queryResponse = await index.query({ vector, topK, includeMetadata: true });
+    const filter = installationId
+      ? { installationId: { $eq: installationId } }
+      : undefined;
+    const queryResponse = await index.query({ vector, topK, includeMetadata: true, filter });
     return queryResponse.matches;
   } catch (err: unknown) {
     logger.error({

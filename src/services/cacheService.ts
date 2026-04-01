@@ -63,28 +63,31 @@ const getRedisClient = async (): Promise<RedisClientType | null> => {
   }
 };
 
-const normalizeKey = (key: string): string => `${CACHE_KEY_PREFIX}${key}`;
+const normalizeKey = (key: string, installationId?: number): string => {
+  const prefix = installationId ? `prism:${installationId}:openai:` : CACHE_KEY_PREFIX;
+  return `${prefix}${key}`;
+};
 
-// Reads a cached OpenAI response by key.
-export const getCachedOpenAIResponse = async (key: string): Promise<string | null> => {
+// Reads a cached OpenAI response by key, scoped to an installation when provided.
+export const getCachedOpenAIResponse = async (key: string, installationId?: number): Promise<string | null> => {
   const client = await getRedisClient();
   if (!client) return null;
 
   try {
-    return await client.get(normalizeKey(key));
+    return await client.get(normalizeKey(key, installationId));
   } catch (err: unknown) {
     logger.error({ message: getErrorMessage(err) }, "Failed to read from Redis cache");
     return null;
   }
 };
 
-// Writes a cached OpenAI response with configured TTL.
-export const setCachedOpenAIResponse = async (key: string, value: string): Promise<void> => {
+// Writes a cached OpenAI response with configured TTL, scoped to an installation when provided.
+export const setCachedOpenAIResponse = async (key: string, value: string, installationId?: number): Promise<void> => {
   const client = await getRedisClient();
   if (!client) return;
 
   try {
-    await client.set(normalizeKey(key), value, { EX: CACHE_TTL_SECONDS });
+    await client.set(normalizeKey(key, installationId), value, { EX: CACHE_TTL_SECONDS });
   } catch (err: unknown) {
     logger.error({ message: getErrorMessage(err) }, "Failed to write to Redis cache");
   }

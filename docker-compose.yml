@@ -1,4 +1,17 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prism-postgres
+    environment:
+      POSTGRES_USER: prism
+      POSTGRES_PASSWORD: prism
+      POSTGRES_DB: prism
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   prism-ai-reviewer:
     build:
       context: .
@@ -7,8 +20,12 @@ services:
     container_name: prism-ai-reviewer
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://prism:prism@postgres:5432/prism
     ports:
       - "3000:3000"
+    depends_on:
+      - postgres
     restart: unless-stopped
 
   ngrok:
@@ -24,3 +41,6 @@ services:
     restart: unless-stopped
     profiles:
       - tunnel
+
+volumes:
+  pgdata:
