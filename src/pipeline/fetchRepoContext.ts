@@ -10,6 +10,8 @@ export interface RepoInfo {
   repo: string;
   headSha: string;
   installationId: number;
+  /** Plan slug for the installation — used for feature gating in the analysis pipeline. */
+  planSlug?: string;
 }
 
 export interface RepoContextResult {

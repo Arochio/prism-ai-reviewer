@@ -108,6 +108,11 @@ app.get("/", (req, res) => {
   res.send("AI PR Reviewer is running");
 });
 
+// Health check endpoint for Railway and uptime monitors.
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
 // GitHub webhook endpoint.
 app.post("/webhook", handleWebhook);
 
