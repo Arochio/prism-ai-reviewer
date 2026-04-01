@@ -5,7 +5,7 @@
 # It is NOT automatically applied — you must set these values manually in the GitHub UI
 # or use the manifest flow endpoint to register programmatically.
 
-name: PRism AI Reviewer
+name: PRismAI-Reviewer
 description: Multi-pass AI code review with inline findings and one-click fix suggestions.
 url: https://github.com/Arochio/prism-ai-reviewer
 public: true
