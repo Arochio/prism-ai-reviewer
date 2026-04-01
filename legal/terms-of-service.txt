@@ -1,0 +1,189 @@
+TERMS OF SERVICE
+PRismAI-Reviewer
+Last updated: April 1, 2026
+
+These Terms of Service ("Terms") govern your use of PRismAI-Reviewer (the "Service"), a GitHub App
+provided by Cooper Graves ("we", "us", or "our"). By installing PRismAI-Reviewer through the GitHub
+Marketplace, you agree to be bound by these Terms.
+
+---
+
+1. THE SERVICE
+
+PRismAI-Reviewer is an automated code review assistant that integrates with GitHub as a GitHub App.
+When installed on a repository, PRismAI-Reviewer analyses pull request diffs using large language
+models and provides automated feedback as GitHub comments.
+
+The Service includes features that vary by subscription plan, including but not limited
+to: bug detection, design analysis, performance analysis, fix suggestions, risk scoring,
+reviewer recommendations, and retrieval-augmented contextual review.
+
+---
+
+2. ELIGIBILITY
+
+You must be at least 13 years of age and capable of forming a binding contract to use
+the Service. If you are accepting these Terms on behalf of an organisation, you represent
+that you have the authority to do so.
+
+---
+
+3. ACCOUNT AND INSTALLATION
+
+Access to the Service is managed through your GitHub account via the GitHub Marketplace.
+You are responsible for maintaining the security of your GitHub account. We are not
+liable for any loss or damage resulting from unauthorised access to your account.
+
+---
+
+4. SUBSCRIPTION PLANS AND BILLING
+
+a) Plans
+PRism is offered on a subscription basis through GitHub Marketplace. Available plans
+and their monthly review limits and included features are listed on the Marketplace
+listing page and in the Service itself.
+
+b) Billing
+All billing is handled by GitHub Marketplace on our behalf. By subscribing to a paid
+plan, you agree to GitHub Marketplace's billing terms and authorise recurring charges.
+
+c) Plan Changes
+You may upgrade or downgrade your plan at any time through GitHub Marketplace. Changes
+take effect at the start of the next billing period unless otherwise stated by GitHub.
+
+d) Cancellation
+You may cancel your subscription at any time by uninstalling PRism or cancelling via
+GitHub Marketplace. No refunds are provided for partial billing periods except where
+required by applicable law.
+
+e) Usage Limits
+Free plan subscriptions are subject to a monthly review limit as stated on the listing.
+Once the limit is reached, PRism will not post reviews for the remainder of that
+calendar month. Paid plans have higher or unlimited limits as described on the listing.
+
+---
+
+5. ACCEPTABLE USE
+
+You agree not to use the Service to:
+
+- Circumvent, disable, or interfere with security features of the Service
+- Attempt to gain unauthorised access to other users' data or installations
+- Use the Service for any unlawful purpose or in violation of applicable laws
+- Reverse-engineer or extract the Service's underlying models or logic
+- Automate requests to the Service in a manner that materially exceeds normal
+  pull request volume in order to abuse usage limits
+- Use the Service to process code that contains intentional malware, exploits,
+  or other malicious content intended to harm third parties
+
+We reserve the right to suspend or terminate access for violations of this section.
+
+---
+
+6. CODE AND DATA
+
+a) Your Content
+You retain all ownership rights to your code and repository content. By using the
+Service, you grant us a limited, non-exclusive licence to access, process, and transmit
+your code solely to provide the Service.
+
+b) AI Processing
+Code diffs and repository context are transmitted to the OpenAI API for analysis.
+You acknowledge and agree that your code content will be processed by OpenAI under
+their API terms. We do not use your code to train our own AI models.
+
+c) Feedback and Embeddings
+Feedback signals you provide and code embeddings generated during the Service
+are stored as described in our Privacy Policy. You grant us a licence to use these
+signals to improve the quality of reviews within your installation.
+
+---
+
+7. INTELLECTUAL PROPERTY
+
+The Service, including its software, design, trademarks, and analysis logic, is owned
+by Cooper Graves and is protected by applicable intellectual property laws. Nothing in
+these Terms transfers ownership of the Service to you.
+
+---
+
+8. DISCLAIMER OF WARRANTIES
+
+THE SERVICE IS PROVIDED "AS IS" AND "AS AVAILABLE" WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, OR NON-INFRINGEMENT.
+
+WE DO NOT WARRANT THAT:
+- THE SERVICE WILL BE UNINTERRUPTED OR ERROR-FREE
+- ANY CODE REVIEW OUTPUT IS ACCURATE, COMPLETE, OR FREE FROM FALSE POSITIVES
+- THE SERVICE WILL IDENTIFY ALL BUGS, SECURITY VULNERABILITIES, OR DESIGN ISSUES
+  PRESENT IN YOUR CODE
+
+AUTOMATED CODE REVIEW IS A SUPPLEMENT TO — NOT A REPLACEMENT FOR — HUMAN CODE REVIEW.
+YOU ARE SOLELY RESPONSIBLE FOR DECISIONS MADE BASED ON OUTPUT FROM THE SERVICE.
+
+---
+
+9. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, COOPER GRAVES SHALL NOT BE LIABLE
+FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS
+OF PROFITS, REVENUE, DATA, OR GOODWILL ARISING FROM OR RELATED TO YOUR USE OF THE
+SERVICE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+OUR TOTAL AGGREGATE LIABILITY TO YOU FOR ALL CLAIMS ARISING FROM OR RELATED TO
+THE SERVICE SHALL NOT EXCEED THE AMOUNT YOU PAID FOR THE SERVICE IN THE THREE-MONTH
+PERIOD IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM.
+
+---
+
+10. INDEMNIFICATION
+
+You agree to indemnify, defend, and hold harmless Cooper Graves from and against any
+claims, damages, losses, liabilities, costs, and expenses (including reasonable legal
+fees) arising from: (a) your use of the Service; (b) your violation of these Terms;
+or (c) your violation of any applicable law or the rights of a third party.
+
+---
+
+11. TERMINATION
+
+We may suspend or terminate your access to the Service at any time, with or without
+notice, for conduct that we determine violates these Terms or is harmful to other users,
+us, third parties, or the integrity of the Service.
+
+You may terminate these Terms at any time by uninstalling PRismAI-Reviewer via GitHub App settings.
+
+Upon termination, your right to use the Service ceases immediately. Sections 6, 7, 8,
+9, 10, and 12 survive termination.
+
+---
+
+12. GOVERNING LAW AND DISPUTES
+
+These Terms are governed by the laws of the jurisdiction in which Cooper Graves operates,
+without regard to conflict of law principles. Any disputes arising from these Terms or
+the Service shall be resolved through good-faith negotiation where possible.
+
+---
+
+13. CHANGES TO THESE TERMS
+
+We may update these Terms from time to time. We will provide notice of material changes
+by updating the "Last updated" date and, where practicable, by posting a notice on the
+GitHub Marketplace listing. Your continued use of the Service after changes take effect
+constitutes acceptance of the revised Terms.
+
+---
+
+14. CONTACT
+
+For questions about these Terms, please contact:
+
+Cooper Graves
+Email: cbgraves@email.neit.edu
+
+---
+
+These Terms constitute the entire agreement between you and Cooper Graves regarding
+the Service and supersede any prior agreements or understandings.

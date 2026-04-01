@@ -1,0 +1,168 @@
+PRIVACY POLICY
+PRismAI-Reviewer
+Last updated: April 1, 2026
+
+This Privacy Policy describes how Cooper Graves ("we", "us", or "our") collects,
+uses, stores, and protects information when you install and use PRismAI-Reviewer (the "Service"),
+a GitHub App available on the GitHub Marketplace.
+
+By installing PRism, you agree to the practices described in this policy.
+
+---
+
+1. INFORMATION WE COLLECT
+
+a) GitHub Installation Data
+When you install PRism through the GitHub Marketplace, GitHub provides us with:
+- Your GitHub account login, account ID, and account type (user or organization)
+- Your chosen billing plan
+- The list of repositories you grant PRism access to
+
+This information is stored in our PostgreSQL database to manage your installation,
+enforce plan limits, and process billing events from GitHub Marketplace.
+
+b) Pull Request and Repository Content
+When a pull request is opened or updated in a repository where PRism is installed,
+we receive and process:
+- File diffs (changed lines of code) for all files in the pull request
+- Repository file tree and related source file contents for contextual analysis
+- Commit history metadata (file paths, churn frequency) used for risk scoring
+- Pull request metadata (PR number, title, author username)
+
+This content is transmitted to the OpenAI API to perform code analysis. OpenAI's
+data usage is governed by their API data usage policies at https://openai.com/policies.
+
+c) Code Embeddings (Vector Data)
+We generate vector embeddings of repository file contents and store them in Pinecone,
+a third-party vector database. These embeddings are used to provide context-aware
+code review suggestions on future pull requests (Retrieval-Augmented Generation).
+
+Embeddings are stored with metadata including the repository full name and file path.
+Embeddings are scoped to your installation and are not shared with or accessible by
+other PRism users.
+
+d) Developer Activity Profiles
+PRism maintains a per-developer activity profile based on code contributions observed
+across pull requests in your repositories. This profile is stored as a vector embedding
+in Pinecone and contains:
+- The developer's GitHub username (as the vector record ID)
+- Aggregated signals about the types of code they write (e.g., files touched,
+  finding patterns, assessed code value scores)
+
+This information is used solely to suggest relevant reviewers within your repositories.
+Profiles are anonymised in the sense that no human-readable personal data beyond the
+GitHub username is stored. No profiles are shared outside your installation.
+
+e) Marketplace Billing Events
+We receive and log webhook events from GitHub Marketplace when a plan is purchased,
+changed, or cancelled. These events contain your GitHub account ID and the plan details.
+
+f) Review Event Logs
+We log metadata about each review performed (repository name, PR number, status,
+and timestamps) to support usage tracking and monthly review limits.
+
+g) Feedback
+If you reply to a PRism comment with a feedback command (e.g., thumbs up/down), the
+feedback signal is stored in Pinecone to improve future analysis quality for your
+installation.
+
+---
+
+2. HOW WE USE YOUR INFORMATION
+
+- To perform automated code review on pull requests
+- To enforce monthly review limits based on your plan
+- To cache analysis results in Redis to reduce cost and latency
+- To persist repository context (embeddings) to improve future reviews
+- To suggest reviewers based on prior contribution patterns
+- To manage your GitHub Marketplace subscription and billing plan
+- To diagnose errors and operate the Service reliably
+
+We do not sell your data. We do not use your code for training AI models beyond
+what OpenAI's API policies permit.
+
+---
+
+3. DATA STORAGE AND RETENTION
+
+- Installation records: retained while your installation is active and for 90 days
+  after deletion, then permanently deleted.
+- Vector embeddings (Pinecone): retained for the duration of your installation.
+  Embeddings are deleted when you uninstall PRism.
+- Cached responses (Redis): cached entries expire automatically (TTL-based) and
+  are not retained beyond the cache expiry period.
+- Review event logs (PostgreSQL): retained for 12 months, then deleted.
+- Marketplace event logs: retained for 12 months, then deleted.
+
+You may request deletion of your data at any time by contacting us (see Section 7).
+Uninstalling PRism from GitHub will trigger removal of your installation record and
+begin the deletion process for associated data.
+
+---
+
+4. THIRD-PARTY SERVICES
+
+PRism uses the following third-party processors:
+
+- OpenAI (https://openai.com) — Code diffs and repository context are sent to
+  the OpenAI API for analysis. Governed by OpenAI's API data usage policies.
+- Pinecone (https://pinecone.io) — Vector embeddings are stored in Pinecone.
+  Governed by Pinecone's privacy policy.
+- Railway (https://railway.app) — The Service is hosted on Railway. Your data
+  passes through and is stored on Railway's infrastructure.
+- GitHub (https://github.com) — PRism operates as a GitHub App. Data received
+  from GitHub webhooks is subject to GitHub's privacy policy.
+- Upstash or Redis-compatible provider — Used for response caching.
+
+We require all third-party processors to maintain appropriate security measures.
+
+---
+
+5. DATA SECURITY
+
+We implement the following security measures:
+- Webhook payloads are verified using HMAC-SHA256 signature validation
+- All external connections use TLS encryption in transit
+- Tenant data is isolated: Redis cache keys and Pinecone vector metadata are
+  scoped per installation ID so one tenant cannot access another's data
+- Database credentials and API keys are stored as environment variables and
+  never hard-coded
+
+No method of transmission over the internet is 100% secure. We cannot guarantee
+absolute security but are committed to using industry-standard practices.
+
+---
+
+6. CHILDREN'S PRIVACY
+
+PRism is not directed at individuals under the age of 13. We do not knowingly
+collect personal information from children. If you believe we have inadvertently
+collected such information, please contact us for immediate deletion.
+
+---
+
+7. YOUR RIGHTS AND CONTACT
+
+You have the right to:
+- Request access to the personal data we hold about you
+- Request correction or deletion of your data
+- Uninstall PRism at any time via GitHub App settings, which suspends data collection
+
+For any privacy-related requests or questions, please contact:
+
+Cooper Graves
+Email: cbgraves@email.neit.edu
+
+We will respond to requests within 30 days.
+
+---
+
+8. CHANGES TO THIS POLICY
+
+We may update this Privacy Policy from time to time. We will notify you of material
+changes by posting the updated policy and updating the "Last updated" date above.
+Continued use of the Service after changes constitutes acceptance of the updated policy.
+
+---
+
+If you have questions about this policy, please contact cbgraves@email.neit.edu.
