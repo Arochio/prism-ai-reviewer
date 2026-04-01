@@ -17,6 +17,8 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
+COPY src/db/migrations ./dist/db/migrations
+COPY start.sh ./start.sh
 USER node
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+CMD ["sh", "start.sh"]
