@@ -58,7 +58,7 @@ export const callOpenAI = async (systemPrompt: string, userContent: string, mode
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
-      max_tokens: openAIConfig.maxTokens,
+      max_completion_tokens: openAIConfig.maxTokens,
       temperature: openAIConfig.temperature,
       top_p: openAIConfig.topP,
       n: openAIConfig.n,
