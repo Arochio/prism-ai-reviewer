@@ -228,7 +228,7 @@ const getInstallationToken = async (installationId: number) => {
         installationId,
         status,
       }, "Installation not found — the app may have been uninstalled or the ID is invalid");
-      throw new Error(`GitHub installation ${installationId} not found (404). Verify the app is still installed.`);
+      throw new Error(`GitHub installation ${installationId} not found (404). Verify the app is still installed.`, { cause: err });
     }
 
     logger.error({

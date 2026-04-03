@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { fetchPRDetails, fetchCommentBody, GitHubChangedFile, postPullRequestComment, postPullRequestInlineComments, createPRComment, updatePRComment } from "../services/githubService";
+import { fetchPRDetails, fetchCommentBody, postPullRequestComment, postPullRequestInlineComments, createPRComment, updatePRComment } from "../services/githubService";
 import { analyzeFiles } from "../services/openaiService";
 import { generateSummary } from "../pipeline/generateSummary";
 import { formatInlineCommentBody } from "../pipeline/splitFindings";
@@ -267,98 +267,6 @@ const isValidMarketplacePurchasePayload = (body: unknown): body is MarketplacePu
     if (!plan || typeof plan.name !== 'string') return false;
 
     return true;
-};
-
-// Limits the number of inline comments posted per PR event to reduce noise
-// Might change in the future to bypass limit based on severity / allow option to
-const MAX_INLINE_COMMENTS = 3;
-
-// Finds the first added line in a unified diff patch for inline comment placement
-const getFirstAddedLineFromPatch = (patch?: string): number | null => {
-    if (!patch) return null;
-
-    let currentNewLine = 0;
-    let insideHunk = false;
-    const lines = patch.split("\n");
-
-    for (const line of lines) {
-        const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-        if (hunkMatch) {
-            const parsed = Number(hunkMatch[1]);
-            if (!Number.isInteger(parsed) || parsed < 0) continue;
-            currentNewLine = parsed;
-            insideHunk = true;
-            continue;
-        }
-
-        if (!insideHunk) continue;
-
-        if (line.startsWith("+") && !line.startsWith("+++")) {
-            return currentNewLine > 0 ? currentNewLine : null;
-        }
-
-        if (!line.startsWith("-")) {
-            currentNewLine += 1;
-        }
-    }
-
-    return null;
-};
-
-// Extracts short actionable highlights from the model output
-const extractAnalysisHighlights = (analysis: string): string[] => {
-    const bullets = analysis
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => /^(?:-|\*|\d+\.)\s+/.test(line))
-        .map((line) => line.replace(/^(?:-|\*|\d+\.)\s+/, ""))
-        .filter((line) => line.length > 0);
-
-    if (bullets.length > 0) {
-        return bullets.slice(0, MAX_INLINE_COMMENTS);
-    }
-
-    return [analysis.replace(/\s+/g, " ").slice(0, 220)];
-};
-
-// Formats a review highlight as a GitHub suggestion block
-const formatInlineSuggestionBody = (highlight: string): string => {
-    const safeHighlight = highlight.replace(/```/g, "'''").trim();
-    return [
-        "AI suggestion:",
-        `> ${safeHighlight}`,
-        "",
-        "```suggestion",
-        `// ${safeHighlight}`,
-        "```",
-    ].join("\n");
-};
-
-// Maps analysis highlights to changed file locations and removes duplicate targets
-const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
-    const highlights = extractAnalysisHighlights(analysis);
-    const candidates = files
-        .filter((file) => file.status !== "removed" && file.patch)
-        .map((file) => ({
-            path: file.filename,
-            line: getFirstAddedLineFromPatch(file.patch),
-        }))
-        .filter((item): item is { path: string; line: number } => item.line !== null);
-
-    const seen = new Set<string>();
-    const dedupedCandidates = candidates.filter((item) => {
-        const key = `${item.path}:${item.line}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
-
-    return dedupedCandidates.slice(0, MAX_INLINE_COMMENTS).map((candidate, index) => ({
-        path: candidate.path,
-        line: candidate.line,
-        side: "RIGHT" as const,
-        body: formatInlineSuggestionBody(highlights[index % highlights.length]),
-    }));
 };
 
 // Generation-counter map for deduplicating concurrent async work on the same key

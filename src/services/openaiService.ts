@@ -72,7 +72,7 @@ export const callOpenAI = async (systemPrompt: string, userContent: string, mode
       status,
       message: getErrorMessage(err),
     }, "OpenAI API request failed");
-    throw new Error(`OpenAI API request failed${status ? ` (status ${status})` : ""}`);
+    throw new Error(`OpenAI API request failed${status ? ` (status ${status})` : ""}`, { cause: err });
   }
 
   if (!result) {

@@ -68,5 +68,5 @@ const envConfig: Partial<OpenAIConfig> = {
 
 export const openAIConfig = {
   ...defaultConfig,
-  ...Object.fromEntries(Object.entries(envConfig).filter(([_, v]) => v !== undefined)),
+  ...Object.fromEntries(Object.entries(envConfig).filter(([, v]) => v !== undefined)),
 } as OpenAIConfig;
