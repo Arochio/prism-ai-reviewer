@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
+import rateLimit from "express-rate-limit";
 import { handleWebhook } from "./controllers/webhookController";
 import { openAIConfig } from "./config/openai.config";
 import { getPool } from "./db/connection";
@@ -109,12 +110,73 @@ app.get("/", (req, res) => {
 });
 
 // Health check endpoint for Railway and uptime monitors.
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
+// Probes each backing service so you can distinguish "app is up" from
+// "app is up but can't reach the DB / Redis / Pinecone".
+app.get("/health", async (_req, res) => {
+  const health: Record<string, boolean | string> = { status: "ok" };
+
+  // PostgreSQL
+  health.db = false;
+  if (process.env.DATABASE_URL) {
+    try {
+      const client = await getPool().connect();
+      await client.query("SELECT 1");
+      client.release();
+      health.db = true;
+    } catch {
+      health.status = "degraded";
+    }
+  }
+
+  // Redis
+  health.redis = false;
+  const hasRedisConfig = process.env.REDIS_URL || (process.env.REDIS_HOST && process.env.REDIS_PORT);
+  if (hasRedisConfig) {
+    try {
+      const { createClient } = await import("redis");
+      const client = process.env.REDIS_URL
+        ? createClient({ url: process.env.REDIS_URL })
+        : createClient({ socket: { host: process.env.REDIS_HOST!, port: Number(process.env.REDIS_PORT) } });
+      await client.connect();
+      await client.ping();
+      await client.disconnect();
+      health.redis = true;
+    } catch {
+      health.status = "degraded";
+    }
+  }
+
+  // Pinecone — only check when embeddings are actually enabled.
+  health.pinecone = false;
+  if (openAIConfig.enableEmbeddings && process.env.PINECONE_API_KEY && process.env.PINECONE_INDEX_NAME) {
+    try {
+      const { Pinecone } = await import("@pinecone-database/pinecone");
+      const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
+      await pc.index(process.env.PINECONE_INDEX_NAME).describeIndexStats();
+      health.pinecone = true;
+    } catch {
+      health.status = "degraded";
+    }
+  }
+
+  // Always 200 — Railway uses this as a liveness check (is the process up?).
+  // PRism is fail-open: if Redis/Pinecone/DB are temporarily unreachable the
+  // app still handles webhooks. Report the service state in the body so
+  // external monitors can alert without triggering unnecessary pod restarts.
+  res.status(200).json(health);
 });
 
-// GitHub webhook endpoint.
-app.post("/webhook", handleWebhook);
+// GitHub webhook endpoint — rate limited to 200 requests per 15 minutes per IP.
+// Genuine GitHub traffic almost never hits this; it blocks flood attacks that
+// would otherwise trigger expensive OpenAI calls on every request.
+const webhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests, please try again later." },
+});
+app.post("/webhook", webhookLimiter, handleWebhook);
 
 // Validates config and external connections before accepting traffic.
 validateStartupConfig().then(() => {
