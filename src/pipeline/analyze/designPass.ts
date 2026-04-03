@@ -1,4 +1,4 @@
-// Design pass: evaluates architecture, naming, coupling, and maintainability.
+// Design pass: evaluates architecture, naming, coupling, and maintainability
 import type { ProcessedFile } from '../extractDiff';
 
 const DESIGN_PASS_SYSTEM_PROMPT =
@@ -44,9 +44,7 @@ const buildUserContent = (files: ProcessedFile[], repoContext: string, customRul
   return `${repoContext}${customRules}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
 };
 
-/*
- * Runs the design and architecture analysis pass against the provided processed files.
- */
+// Runs the design and architecture analysis pass against the provided processed files
 export const runDesignPass = async (
   files: ProcessedFile[],
   callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>,

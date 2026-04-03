@@ -1,4 +1,4 @@
-// Stores and retrieves user feedback on AI review comments for prompt refinement.
+// Stores and retrieves user feedback on AI review comments for prompt refinement
 import { createEmbedding, storeEmbedding, querySimilar } from './vectorService';
 import { logger } from './logger';
 
@@ -18,13 +18,11 @@ export interface FeedbackRecord {
   aiReviewSnippet: string;
 }
 
-// Matches `/prism-feedback 👍 optional explanation` or `/prism-feedback 👎 optional explanation`.
+// Matches `/prism-feedback 👍 optional explanation` or `/prism-feedback 👎 optional explanation`
 const FEEDBACK_PATTERN = /^\/prism-feedback\s+(👍|👎|\+1|-1|positive|negative)(?:\s+(.+))?$/im;
 
-/*
- * Parses a comment body for a feedback command.
- * Returns null if the comment is not a feedback command.
- */
+// Parses a comment body for a feedback command
+// Returns null if the comment is not a feedback command
 export const parseFeedbackCommand = (body: string): { sentiment: FeedbackSentiment; explanation: string } | null => {
   const match = body.trim().match(FEEDBACK_PATTERN);
   if (!match) return null;
@@ -37,11 +35,9 @@ export const parseFeedbackCommand = (body: string): { sentiment: FeedbackSentime
   return { sentiment, explanation };
 };
 
-/*
- * Embeds and stores a feedback record in Pinecone for future retrieval.
- * The embedding is based on the AI review snippet so similar future reviews
- * can retrieve relevant past feedback.
- */
+// Embeds and stores a feedback record in Pinecone for future retrieval
+// The embedding is based on the AI review snippet so similar future reviews
+// can retrieve relevant past feedback
 export const storeFeedback = async (record: FeedbackRecord, installationId?: number): Promise<void> => {
   try {
     const textToEmbed = `${record.aiReviewSnippet}\n\nUser feedback (${record.sentiment}): ${record.userFeedback}`;
@@ -70,10 +66,8 @@ export const storeFeedback = async (record: FeedbackRecord, installationId?: num
   }
 };
 
-/*
- * Queries Pinecone for past feedback that is semantically similar to the given
- * code snippet. Returns a formatted block of explicit rules derived from feedback.
- */
+// Queries Pinecone for past feedback that is semantically similar to the given
+// code snippet. Returns a formatted block of explicit rules derived from feedback
 export const retrieveFeedback = async (codeSnippet: string, topK = 3, installationId?: number): Promise<string> => {
   try {
     const embedding = await createEmbedding(codeSnippet);

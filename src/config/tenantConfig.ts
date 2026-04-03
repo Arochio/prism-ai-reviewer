@@ -2,8 +2,8 @@ import { openAIConfig } from "./openai.config";
 import type { OpenAIConfig } from "./openai.config";
 import type { Installation } from "../db/schema";
 
-// Keys in installations.settings that can override the global OpenAI config.
-// Only a safe, explicitly allow-listed subset of fields is honoured.
+// Keys in installations.settings that can override the global OpenAI config
+// Only a safe, explicitly allow-listed subset of fields is honoured
 const ALLOWED_OVERRIDES: ReadonlyArray<keyof OpenAIConfig> = [
   "model",
   "maxTokens",
@@ -14,16 +14,14 @@ const ALLOWED_OVERRIDES: ReadonlyArray<keyof OpenAIConfig> = [
   "totalFilesLimit",
 ];
 
-/**
- * Returns the effective OpenAI config for a tenant.
- *
- * Falls back to the global `openAIConfig` when:
- * - The installation row is null (no DB / not yet stored)
- * - The `settings` column is empty ({})
- *
- * This is the single place to add future per-tenant customizations such as
- * BYOK (bring-your-own-key), custom model selection, or increased token limits.
- */
+// Returns the effective OpenAI config for a tenant
+//
+// Falls back to the global `openAIConfig` when:
+// - The installation row is null (no DB / not yet stored)
+// - The `settings` column is empty ({})
+//
+// This is the single place to add future per-tenant customizations such as
+// BYOK (bring-your-own-key), custom model selection, or increased token limits
 export const resolveTenantConfig = (installation: Installation | null): OpenAIConfig => {
   if (!installation?.settings) return openAIConfig;
 
@@ -33,7 +31,7 @@ export const resolveTenantConfig = (installation: Installation | null): OpenAICo
   const overrides: Partial<OpenAIConfig> = {};
   for (const key of ALLOWED_OVERRIDES) {
     if (key in settings) {
-      // Type narrowing: only copy values whose runtime type matches the default.
+      // Type narrowing: only copy values whose runtime type matches the default
       const defaultVal = openAIConfig[key];
       const incoming = settings[key];
       if (typeof incoming === typeof defaultVal) {

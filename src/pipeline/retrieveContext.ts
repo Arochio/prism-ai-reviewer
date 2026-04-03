@@ -1,4 +1,4 @@
-// Enriches processed files with embedding-based similarity context from the vector store.
+// Enriches processed files with embedding-based similarity context from the vector store
 import { openAIConfig } from '../config/openai.config';
 import { createEmbedding, querySimilar } from '../services/vectorService';
 import { retrieveFeedback } from '../services/feedbackService';
@@ -10,12 +10,10 @@ const getErrorMessage = (error: unknown): string => {
   return 'Unknown error';
 };
 
-/*
- * Generates embeddings for each file and attaches semantically similar filenames
- * previously stored in the vector index. Failures are non-blocking per file.
- */
+// Generates embeddings for each file and attaches semantically similar filenames
+// previously stored in the vector index — failures are non-blocking per file
 export const retrieveContext = async (files: ProcessedFile[], installationId?: number): Promise<ProcessedFile[]> => {
-  // Retrieve feedback once using a combined snippet of all file contents.
+  // Retrieve feedback once using a combined snippet of all file contents
   const combinedSnippet = files.map((f) => f.content.slice(0, 500)).join('\n');
   const feedbackContext = await retrieveFeedback(combinedSnippet, 3, installationId);
 
@@ -27,7 +25,7 @@ export const retrieveContext = async (files: ProcessedFile[], installationId?: n
         embedding = await createEmbedding(file.content);
         const similar = await querySimilar(embedding, openAIConfig.vectorDbTopK, installationId);
         if (similar.length > 0) {
-          // Builds a RAG context block from stored filename + content snippets.
+          // Builds a RAG context block from stored filename + content snippets
           const contextBlocks = similar
             .filter((s) => s.metadata?.['filename'] && s.metadata?.['type'] !== 'feedback' && s.metadata?.['type'] !== 'developer-profile')
             .map((s) => {
@@ -42,7 +40,7 @@ export const retrieveContext = async (files: ProcessedFile[], installationId?: n
             ? `\n\n<similar_codebase_files>\n${contextBlocks}\n</similar_codebase_files>`
             : '';
         }
-        // Append shared feedback context to each file's similar text.
+        // Append shared feedback context to each file's similar text
         similarText += feedbackContext;
       } catch (err: unknown) {
         logger.error({

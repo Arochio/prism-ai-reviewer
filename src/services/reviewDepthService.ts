@@ -1,9 +1,9 @@
 // Computes anonymous review coverage for a PR and formats a markdown section
-// that is appended to (or replaces) the Prism summary comment after each review submission.
+// that is appended to (or replaces) the Prism summary comment after each review submission
 //
 // Anonymized design: no reviewer names are surfaced — only aggregate stats and
 // uncovered file lists. The goal is to give the PR author actionable context
-// without creating social pressure around individual reviewers.
+// without creating social pressure around individual reviewers
 
 import {
   fetchPRReviews,
@@ -14,10 +14,10 @@ import {
 } from './githubService';
 import { logger } from './logger';
 
-// Marker used to locate and replace the coverage section on subsequent review events.
+// Marker used to locate and replace the coverage section on subsequent review events
 const COVERAGE_MARKER = '\n\n---\n## Review Coverage';
 
-// File paths matching these patterns are flagged as high-risk in the uncovered list.
+// File paths matching these patterns are flagged as high-risk in the uncovered list
 const RISK_PATH_PATTERNS = [
   /\bauth\b/i,
   /\bsecurity\b/i,
@@ -34,14 +34,14 @@ const RISK_PATH_PATTERNS = [
 const isRiskyPath = (path: string): boolean =>
   RISK_PATH_PATTERNS.some((r) => r.test(path));
 
-// Builds the markdown coverage section from review and file data.
+// Builds the markdown coverage section from review and file data
 const buildCoverageSection = (
   reviews: Awaited<ReturnType<typeof fetchPRReviews>>,
   reviewComments: Awaited<ReturnType<typeof fetchPRReviewComments>>,
   changedFilenames: string[],
   prCreatedAt: string,
 ): string => {
-  // Index inline comments by review ID.
+  // Index inline comments by review ID
   const commentsByReview = new Map<number, string[]>();
   for (const comment of reviewComments) {
     const id = comment.pull_request_review_id;
@@ -49,7 +49,7 @@ const buildCoverageSection = (
     commentsByReview.get(id)!.push(comment.path);
   }
 
-  // Aggregate per-reviewer stats (bots excluded, PENDING skipped).
+  // Aggregate per-reviewer stats (bots excluded, PENDING skipped)
   const prCreatedMs = new Date(prCreatedAt).getTime();
 
   interface ReviewerStats {
@@ -80,7 +80,7 @@ const buildCoverageSection = (
     }
 
     const stats = byReviewer.get(login)!;
-    // Escalate state: CHANGES_REQUESTED > APPROVED > COMMENTED.
+    // Escalate state: CHANGES_REQUESTED > APPROVED > COMMENTED
     if (review.state === 'CHANGES_REQUESTED') stats.state = 'CHANGES_REQUESTED';
     else if (review.state === 'APPROVED' && stats.state !== 'CHANGES_REQUESTED') stats.state = 'APPROVED';
     stats.commentCount += paths.length;
@@ -88,7 +88,7 @@ const buildCoverageSection = (
     stats.fastestSubmitMinutes = Math.min(stats.fastestSubmitMinutes, minutesSinceOpen);
   }
 
-  // Aggregate across all reviewers.
+  // Aggregate across all reviewers
   const reviewedFiles = new Set<string>();
   for (const stats of byReviewer.values()) {
     for (const f of stats.filesCovered) reviewedFiles.add(f);
@@ -97,7 +97,7 @@ const buildCoverageSection = (
   const approvals = [...byReviewer.values()].filter((s) => s.state === 'APPROVED');
   const approvalCount = approvals.length;
 
-  // Quick approvals: approved with no inline comments and submitted < 10 min after PR opened.
+  // Quick approvals: approved with no inline comments and submitted < 10 min after PR opened
   const quickApprovalCount = approvals.filter(
     (s) => s.commentCount === 0 && s.fastestSubmitMinutes < 10,
   ).length;
@@ -140,8 +140,8 @@ const buildCoverageSection = (
   return lines.join('\n');
 };
 
-// Entry point called from the webhook handler on every pull_request_review submission.
-// Fetches review data, computes coverage, then patches the existing Prism summary comment.
+// Entry point called from the webhook handler on every pull_request_review submission
+// Fetches review data, computes coverage, then patches the existing Prism summary comment
 export const updateReviewCoverage = async (
   owner: string,
   repo: string,
@@ -149,7 +149,7 @@ export const updateReviewCoverage = async (
   prCreatedAt: string,
   installationId: number,
 ): Promise<void> => {
-  // Fetch in parallel: reviews, inline comments, changed filenames, existing Prism comment.
+  // Fetch in parallel: reviews, inline comments, changed filenames, existing Prism comment
   const [reviews, reviewComments, changedFilenames, prismComment] = await Promise.all([
     fetchPRReviews(owner, repo, prNumber, installationId),
     fetchPRReviewComments(owner, repo, prNumber, installationId),
@@ -157,13 +157,13 @@ export const updateReviewCoverage = async (
     findPrismSummaryComment(owner, repo, prNumber, installationId),
   ]);
 
-  // Nothing to update if Prism hasn't posted its summary yet.
+  // Nothing to update if Prism hasn't posted its summary yet
   if (!prismComment) {
     logger.info({ owner, repo, prNumber }, 'No Prism summary comment found — skipping review coverage update');
     return;
   }
 
-  // Nothing meaningful to show if no human reviews exist yet.
+  // Nothing meaningful to show if no human reviews exist yet
   const humanReviews = reviews.filter(
     (r) => r.state !== 'PENDING' && !r.user.login.endsWith('[bot]') && !r.user.login.endsWith('-bot'),
   );
@@ -171,7 +171,7 @@ export const updateReviewCoverage = async (
 
   const coverageSection = buildCoverageSection(reviews, reviewComments, changedFilenames, prCreatedAt);
 
-  // Strip any existing coverage section, then append the fresh one.
+  // Strip any existing coverage section, then append the fresh one
   const baseBody = prismComment.body.includes(COVERAGE_MARKER)
     ? prismComment.body.slice(0, prismComment.body.indexOf(COVERAGE_MARKER))
     : prismComment.body;

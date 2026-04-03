@@ -1,4 +1,4 @@
-// Performance pass: identifies inefficiencies, blocking operations, and resource misuse.
+// Performance pass: identifies inefficiencies, blocking operations, and resource misuse
 import type { ProcessedFile } from '../extractDiff';
 
 const PERFORMANCE_PASS_SYSTEM_PROMPT =
@@ -44,9 +44,7 @@ const buildUserContent = (files: ProcessedFile[], repoContext: string, customRul
   return `${repoContext}${customRules}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
 };
 
-/*
- * Runs the performance analysis pass against the provided processed files.
- */
+// Runs the performance analysis pass against the provided processed files
 export const runPerformancePass = async (
   files: ProcessedFile[],
   callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>,

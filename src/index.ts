@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-// Loads environment variables before any service initialization.
+// Loads environment variables before any service initialization
 dotenv.config();
 
 import express from "express";
@@ -11,8 +11,8 @@ import { logger } from "./services/logger";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Validates all required configuration at startup so misconfigurations surface
-// immediately instead of failing silently on the first webhook.
+// Validates all required configuration at startup so misconfigurations appear
+// immediately instead of failing silently on the first webhook
 const validateStartupConfig = async () => {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -102,16 +102,16 @@ const validateStartupConfig = async () => {
   logger.info("Startup validation passed");
 };
 
-// Parses incoming webhook JSON payloads.
+// Parses incoming webhook JSON payloads
 app.use(express.json());
 
 app.get("/", (req, res) => {
   res.send("AI PR Reviewer is running");
 });
 
-// Health check endpoint for Railway and uptime monitors.
+// Health check endpoint for Railway and uptime monitors
 // Probes each backing service so you can distinguish "app is up" from
-// "app is up but can't reach the DB / Redis / Pinecone".
+// "app is up but can't reach the DB / Redis / Pinecone"
 app.get("/health", async (_req, res) => {
   const health: Record<string, boolean | string> = { status: "ok" };
 
@@ -146,7 +146,7 @@ app.get("/health", async (_req, res) => {
     }
   }
 
-  // Pinecone — only check when embeddings are actually enabled.
+  // Pinecone — only check when embeddings are actually enabled
   health.pinecone = false;
   if (openAIConfig.enableEmbeddings && process.env.PINECONE_API_KEY && process.env.PINECONE_INDEX_NAME) {
     try {
@@ -159,26 +159,27 @@ app.get("/health", async (_req, res) => {
     }
   }
 
-  // Always 200 — Railway uses this as a liveness check (is the process up?).
+  // Always 200 — Railway uses this as a liveness check (if the process is running)
   // PRism is fail-open: if Redis/Pinecone/DB are temporarily unreachable the
   // app still handles webhooks. Report the service state in the body so
-  // external monitors can alert without triggering unnecessary pod restarts.
+  // external monitors can alert without triggering unnecessary pod restarts
   res.status(200).json(health);
 });
 
-// GitHub webhook endpoint — rate limited to 200 requests per 15 minutes per IP.
+// GitHub webhook endpoint — rate limited to 200 requests per 15 minutes per IP
 // Genuine GitHub traffic almost never hits this; it blocks flood attacks that
-// would otherwise trigger expensive OpenAI calls on every request.
+// would otherwise trigger expensive OpenAI calls on every request
+const webhookLimitPerFifteenMinutes = 200;
 const webhookLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 200,
+  limit: webhookLimitPerFifteenMinutes,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests, please try again later." },
 });
 app.post("/webhook", webhookLimiter, handleWebhook);
 
-// Validates config and external connections before accepting traffic.
+// Validates config and external connections before accepting traffic
 validateStartupConfig().then(() => {
   app.listen(PORT, () => {
     logger.info({ port: PORT }, "Server running");

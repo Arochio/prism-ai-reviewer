@@ -1,4 +1,4 @@
-// Formats ranked pass results into a structured Markdown PR review comment.
+// Formats ranked pass results into a structured Markdown PR review comment
 import type { PassResult } from './rankFindings';
 
 const PASS_ICONS: Record<string, string> = {
@@ -7,14 +7,12 @@ const PASS_ICONS: Record<string, string> = {
   Performance: '\u26a1',
 };
 
-/*
- * Formats ranked pipeline results into a single Markdown comment.
- * Passes with no findings are collapsed to a single line.
- * Recommendations from risk assessment are appended as a footer.
- *
- * When inlineCount > 0, the summary is lightweight: only non-inline
- * findings are shown in detail, with a note about inline comments.
- */
+// Formats ranked pipeline results into a single Markdown comment
+// Passes with no findings are collapsed to a single line
+// Recommendations from risk assessment are appended as a footer
+//
+// When inlineCount > 0, the summary is lightweight: only non-inline
+// findings are shown in detail, with a note about inline comments
 export const generateSummary = (
   results: PassResult[],
   recommendations: string[] = [],

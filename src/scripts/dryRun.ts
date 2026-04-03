@@ -1,5 +1,5 @@
 // Runs the full analysis pipeline locally against staged or specified files
-// without posting to GitHub. Useful for testing prompts and configuration.
+// without posting to GitHub. Useful for testing prompts and configuration
 //
 // Usage:
 //   npm run dry-run                          # analyzes all git-staged files

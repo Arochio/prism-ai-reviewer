@@ -1,4 +1,4 @@
-// Normalises raw GitHub file data into a consistent shape for pipeline passes.
+// Normalises raw GitHub file data into a consistent shape for pipeline passes
 import { openAIConfig } from '../config/openai.config';
 
 export interface AnalyzableFile {
@@ -17,10 +17,8 @@ export interface ProcessedFile {
   embedding: number[] | null;
 }
 
-/*
- * Filters and truncates changed files to fit within configured size limits.
- * Removed files and files exceeding the size limit (when bypass is enabled) are excluded.
- */
+// Filters and truncates changed files to fit within configured size limits
+// Removed files and files exceeding the size limit (when bypass is enabled) are excluded
 
 const isValidFile = (f: unknown): f is AnalyzableFile =>
   f != null &&
@@ -34,7 +32,7 @@ const isIncludedFile = (f: AnalyzableFile): boolean => {
   return true;
 };
 
-// Adds 1-based line numbers to source content for precise line references.
+// Adds 1-based line numbers to source content for precise line references
 const addLineNumbers = (source: string): string =>
   source
     .split('\n')

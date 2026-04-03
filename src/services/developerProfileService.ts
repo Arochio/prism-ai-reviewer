@@ -1,6 +1,6 @@
-// Silently builds and maintains per-developer profiles in Pinecone.
+// Silently builds and maintains per-developer profiles in Pinecone
 // Profiles accumulate across PRs to surface contribution patterns and strengths
-// without exposing any of this data to developers in review comments.
+// without exposing any of this data to developers in review comments
 
 import { Pinecone } from '@pinecone-database/pinecone';
 import { createEmbedding } from './vectorService';
@@ -11,7 +11,7 @@ import type { CodeValueResult } from '../pipeline/assessCodeValue';
 
 const pinecone = new Pinecone({ apiKey: process.env.PINECONE_API_KEY! });
 
-// Stored as Pinecone metadata — all primitive types (arrays serialized as JSON strings).
+// Stored as Pinecone metadata — all primitive types (arrays serialized as JSON strings)
 interface DeveloperProfileMetadata {
   type: 'developer-profile';
   author: string;
@@ -34,7 +34,7 @@ interface DeveloperProfileMetadata {
   avgQuantityScore: number;
 }
 
-// Counts findings by severity across all ranked pass results.
+// Counts findings by severity across all ranked pass results
 const countFindingsBySeverity = (ranked: PassResult[]) => {
   let critical = 0, high = 0, medium = 0, low = 0;
   for (const pass of ranked) {
@@ -50,7 +50,7 @@ const countFindingsBySeverity = (ranked: PassResult[]) => {
   return { critical, high, medium, low };
 };
 
-// Merges new file extension counts into an existing frequency map.
+// Merges new file extension counts into an existing frequency map
 const mergeLanguageMap = (files: ProcessedFile[], existing: Record<string, number>): Record<string, number> => {
   const map = { ...existing };
   for (const f of files) {
@@ -60,7 +60,7 @@ const mergeLanguageMap = (files: ProcessedFile[], existing: Record<string, numbe
   return map;
 };
 
-// Merges new directory counts into an existing frequency map.
+// Merges new directory counts into an existing frequency map
 const mergeAreaMap = (files: ProcessedFile[], existing: Record<string, number>): Record<string, number> => {
   const map = { ...existing };
   for (const f of files) {
@@ -71,7 +71,7 @@ const mergeAreaMap = (files: ProcessedFile[], existing: Record<string, number>):
   return map;
 };
 
-// Returns the top N entries from a frequency map sorted by count descending.
+// Returns the top N entries from a frequency map sorted by count descending
 const topN = (map: Record<string, number>, n: number): Record<string, number> =>
   Object.fromEntries(
     Object.entries(map)
@@ -79,7 +79,7 @@ const topN = (map: Record<string, number>, n: number): Record<string, number> =>
       .slice(0, n)
   );
 
-// Derives human-readable strength descriptors from accumulated profile stats.
+// Derives human-readable strength descriptors from accumulated profile stats
 const deriveStrengths = (
   meta: DeveloperProfileMetadata,
   topLanguages: Record<string, number>,
@@ -102,8 +102,8 @@ const deriveStrengths = (
   return strengths;
 };
 
-// Builds a natural-language profile summary for embedding.
-// This text drives similarity search — "who works on auth?" etc.
+// Builds a natural-language profile summary for embedding
+// This text drives similarity search — "who works on auth?" etc
 const buildProfileText = (
   meta: DeveloperProfileMetadata,
   topLanguages: Record<string, number>,
@@ -123,15 +123,15 @@ const buildProfileText = (
   ].filter(Boolean).join(' ');
 };
 
-// Stable vector ID for a developer's profile — one record per author per repo.
+// Stable vector ID for a developer's profile — one record per author per repo
 const profileId = (author: string, repoFullName: string): string => {
   const safe = `${repoFullName}:${author}`.replace(/[^a-zA-Z0-9:_-]/g, '-');
   return `devprofile:${safe}`;
 };
 
-// Upserts a developer's profile after each PR analysis.
-// Fetches any existing profile, merges the new PR's stats into it, then re-embeds and stores.
-// All failures are swallowed — profiling must never block review delivery.
+// Upserts a developer's profile after each PR analysis
+// Fetches any existing profile, merges the new PR's stats into it, then re-embeds and stores
+// All failures are swallowed — profiling must never block review delivery
 export const updateDeveloperProfile = async (
   author: string,
   repoFullName: string,
@@ -146,7 +146,7 @@ export const updateDeveloperProfile = async (
     const index = pinecone.index(process.env.PINECONE_INDEX_NAME!);
     const id = profileId(author, repoFullName);
 
-    // Load existing profile (may not exist for new developers).
+    // Load existing profile (may not exist for new developers)
     let existing: Partial<DeveloperProfileMetadata> = {};
     try {
       const fetched = await index.fetch({ ids: [id] });
@@ -155,10 +155,10 @@ export const updateDeveloperProfile = async (
         existing = record.metadata as Partial<DeveloperProfileMetadata>;
       }
     } catch {
-      // First PR for this developer — start from zero.
+      // First PR for this developer — start from zero
     }
 
-    // Merge language and area frequency maps.
+    // Merge language and area frequency maps
     const prevLangs: Record<string, number> = existing.topLanguages
       ? (JSON.parse(existing.topLanguages) as Record<string, number>)
       : {};
@@ -169,17 +169,17 @@ export const updateDeveloperProfile = async (
     const mergedLangs = topN(mergeLanguageMap(files, prevLangs), 10);
     const mergedAreas = topN(mergeAreaMap(files, prevAreas), 10);
 
-    // Accumulate finding counts.
+    // Accumulate finding counts
     const findings = countFindingsBySeverity(ranked);
     const newTotalFindings = findings.critical + findings.high + findings.medium + findings.low;
 
-    // Accumulate PR-level stats.
+    // Accumulate PR-level stats
     const prevPrs = existing.prsAnalyzed ?? 0;
     const prsAnalyzed = prevPrs + 1;
     const totalCodeValue = (existing.totalCodeValue ?? 0) + codeValue.codeValue;
     const avgCodeValue = totalCodeValue / prsAnalyzed;
 
-    // Running weighted averages for complexity/quantity.
+    // Running weighted averages for complexity/quantity
     const avgComplexityScore = prevPrs > 0
       ? ((existing.avgComplexityScore ?? 0) * prevPrs + codeValue.complexityScore) / prsAnalyzed
       : codeValue.complexityScore;
@@ -209,7 +209,7 @@ export const updateDeveloperProfile = async (
       avgQuantityScore: Math.round(avgQuantityScore * 10) / 10,
     };
 
-    // Re-embed the updated profile text so similarity search stays current.
+    // Re-embed the updated profile text so similarity search stays current
     const profileText = buildProfileText(meta, mergedLangs, mergedAreas);
     const vector = await createEmbedding(profileText);
 
