@@ -1,6 +1,6 @@
-// Retroactive repo scanning — seeds Prism's knowledge base on first PR for a new repo.
-// Runs in the background so the first review is not delayed.
-// Scans metadata from recent merged PRs and ingests key repo files into Pinecone.
+// Retroactive repo scanning — seeds Prism's knowledge base on first PR for a new repo
+// Runs in the background so the first review is not delayed
+// Scans metadata from recent merged PRs and ingests key repo files into Pinecone
 
 import { getCachedOpenAIResponse, setCachedOpenAIResponse } from './cacheService';
 import { fetchMergedPRs, fetchRepoTree, fetchRepoFileContents, type MergedPRSummary, type GitHubTreeEntry } from './githubService';
@@ -8,26 +8,26 @@ import { createEmbedding, storeEmbedding } from './vectorService';
 import { openAIConfig } from '../config/openai.config';
 import { logger } from './logger';
 
-// Redis key prefix for bootstrap status flags.
+// Redis key prefix for bootstrap status flags
 const BOOTSTRAP_KEY_PREFIX = 'prism:bootstrap:';
 
-// Maximum number of key files to ingest into Pinecone during bootstrap.
+// Maximum number of key files to ingest into Pinecone during bootstrap
 const MAX_FILES_TO_INGEST = 50;
 
-// Maximum content stored per Pinecone record (Pinecone 40KB metadata limit).
+// Maximum content stored per Pinecone record (Pinecone 40KB metadata limit)
 const MAX_CONTENT_CHARS = 2000;
 
-// Embedding concurrency to stay within OpenAI rate limits.
+// Embedding concurrency to stay within OpenAI rate limits
 const CONCURRENCY = 5;
 
-// File extensions considered high-value for RAG context.
+// File extensions considered high-value for RAG context
 const KEY_EXTENSIONS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.java', '.rb',
   '.cs', '.c', '.cpp', '.h', '.hpp', '.swift', '.kt',
   '.md', '.yml', '.yaml', '.json', '.toml',
 ]);
 
-// Files that are especially useful for understanding a repo.
+// Files that are especially useful for understanding a repo
 const PRIORITY_FILENAMES = new Set([
   'readme.md', 'readme', 'contributing.md', 'architecture.md',
   'package.json', 'tsconfig.json', 'pyproject.toml', 'cargo.toml',
@@ -36,7 +36,7 @@ const PRIORITY_FILENAMES = new Set([
   '.prism-rules',
 ]);
 
-// Paths that should never be indexed.
+// Paths that should never be indexed
 const SKIP_PATHS = ['node_modules', 'dist', '.git', '.env', 'vendor', '__pycache__', '.next', 'build'];
 
 const shouldSkipPath = (filePath: string): boolean =>
@@ -44,41 +44,41 @@ const shouldSkipPath = (filePath: string): boolean =>
     (skip) => filePath === skip || filePath.startsWith(`${skip}/`) || filePath.includes(`/${skip}/`),
   );
 
-// Checks if a repo has already been bootstrapped.
+// Checks if a repo has already been bootstrapped
 export const isBootstrapped = async (owner: string, repo: string, installationId?: number): Promise<boolean> => {
   const key = `${BOOTSTRAP_KEY_PREFIX}${owner}/${repo}`;
   const cached = await getCachedOpenAIResponse(key, installationId);
   return cached !== null;
 };
 
-// Marks a repo as bootstrapped. TTL is 30 days — after that, a re-bootstrap can occur.
+// Marks a repo as bootstrapped. TTL is 30 days — after that, a re-bootstrap can occur
 const markBootstrapped = async (owner: string, repo: string, installationId?: number): Promise<void> => {
   const key = `${BOOTSTRAP_KEY_PREFIX}${owner}/${repo}`;
   await setCachedOpenAIResponse(key, JSON.stringify({ bootstrappedAt: new Date().toISOString() }), installationId);
 };
 
-// Scores a file tree entry for ingestion priority. Higher = more important.
+// Scores a file tree entry for ingestion priority. Higher = more important
 const fileIngestionPriority = (entry: GitHubTreeEntry, hotFiles: Map<string, number>): number => {
   const name = entry.path.split('/').pop()?.toLowerCase() ?? '';
   let score = 0;
 
-  // Priority filenames get highest score.
+  // Priority filenames get highest score
   if (PRIORITY_FILENAMES.has(name)) score += 100;
 
-  // Key extension check.
+  // Key extension check
   const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
   if (KEY_EXTENSIONS.has(ext)) score += 10;
   else return 0; // skip non-key files entirely
 
-  // Files frequently changed in merged PRs are more valuable.
+  // Files frequently changed in merged PRs are more valuable
   const churn = hotFiles.get(entry.path) ?? 0;
   score += Math.min(churn * 5, 50);
 
-  // Prefer smaller files (more likely to be interfaces/configs).
+  // Prefer smaller files (more likely to be interfaces/configs)
   if (entry.size && entry.size < 5000) score += 10;
   if (entry.size && entry.size > 50000) score -= 20;
 
-  // Top-level files are more valuable than deeply nested ones.
+  // Top-level files are more valuable than deeply nested ones
   const depth = entry.path.split('/').length;
   if (depth <= 2) score += 15;
   if (depth <= 3) score += 5;
@@ -86,7 +86,7 @@ const fileIngestionPriority = (entry: GitHubTreeEntry, hotFiles: Map<string, num
   return score;
 };
 
-// Builds a file churn map from merged PR data.
+// Builds a file churn map from merged PR data
 export const buildChurnMap = (mergedPRs: MergedPRSummary[]): Map<string, number> => {
   const churn = new Map<string, number>();
   for (const pr of mergedPRs) {
@@ -97,7 +97,7 @@ export const buildChurnMap = (mergedPRs: MergedPRSummary[]): Map<string, number>
   return churn;
 };
 
-// Builds a summary of the repo's recent PR history for logging and diagnostics.
+// Builds a summary of the repo's recent PR history for logging and diagnostics
 export interface BootstrapProfile {
   totalMergedPRs: number;
   avgFilesPerPR: number;
@@ -111,7 +111,7 @@ export const buildRepoProfile = (mergedPRs: MergedPRSummary[], treeSize: number)
     ? Math.round(mergedPRs.reduce((sum, pr) => sum + pr.filesChanged, 0) / mergedPRs.length)
     : 0;
 
-  // Count contributions per author.
+  // Count contributions per author
   const authorCounts = new Map<string, number>();
   for (const pr of mergedPRs) {
     authorCounts.set(pr.author, (authorCounts.get(pr.author) ?? 0) + 1);
@@ -136,7 +136,7 @@ export const buildRepoProfile = (mergedPRs: MergedPRSummary[], treeSize: number)
   };
 };
 
-// Processes a batch of items with bounded concurrency.
+// Processes a batch of items with bounded concurrency
 const processBatch = async <T>(
   items: T[],
   handler: (item: T) => Promise<void>,
@@ -152,17 +152,15 @@ const processBatch = async <T>(
   await Promise.all(workers);
 };
 
-/*
- * Runs the full retroactive bootstrap for a repo:
- *
- * 1. Checks if already bootstrapped (Redis flag).
- * 2. Fetches ~100 recently merged PRs and extracts metadata.
- * 3. Fetches the repo file tree and selects high-value files.
- * 4. Ingests selected files into Pinecone as RAG context.
- * 5. Marks the repo as bootstrapped.
- *
- * All errors are caught and logged — bootstrap never blocks a review.
- */
+// Runs the full retroactive bootstrap for a repo:
+//
+// 1. Checks if already bootstrapped (Redis flag)
+// 2. Fetches ~100 recently merged PRs and extracts metadata
+// 3. Fetches the repo file tree and selects high-value files
+// 4. Ingests selected files into Pinecone as RAG context
+// 5. Marks the repo as bootstrapped
+//
+// All errors are caught and logged — bootstrap never blocks a review
 export const bootstrapRepo = async (
   owner: string,
   repo: string,
@@ -229,7 +227,7 @@ export const bootstrapRepo = async (
     } catch (err: unknown) {
       logger.error({ repo: repoKey, message: err instanceof Error ? err.message : 'Unknown error' },
         'Failed to fetch file contents during bootstrap');
-      // Still mark as bootstrapped so we don't retry endlessly.
+      // Still mark as bootstrapped so we don't retry endlessly
       await markBootstrapped(owner, repo, installationId);
       return;
     }
@@ -268,7 +266,7 @@ export const bootstrapRepo = async (
     logger.info({ repo: repoKey, indexed, skipped, failed }, 'Bootstrap file ingestion complete');
   }
 
-  // Step 5: Mark repo as bootstrapped.
+  // Step 5: Mark repo as bootstrapped
   await markBootstrapped(owner, repo, installationId);
   logger.info({ repo: repoKey }, 'Repo bootstrap complete');
 };

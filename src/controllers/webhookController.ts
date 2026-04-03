@@ -54,7 +54,7 @@ interface IssueCommentPayload {
         id: number;
         body: string;
         user: { login: string };
-        /** GitHub populates this when replying to another comment. */
+        // GitHub populates this when replying to another comment
         in_reply_to_id?: number;
     };
     issue: {
@@ -269,10 +269,11 @@ const isValidMarketplacePurchasePayload = (body: unknown): body is MarketplacePu
     return true;
 };
 
-// Limits the number of inline comments posted per PR event to reduce noise.
+// Limits the number of inline comments posted per PR event to reduce noise
+// Might change in the future to bypass limit based on severity / allow option to
 const MAX_INLINE_COMMENTS = 3;
 
-// Finds the first added line in a unified diff patch for inline comment placement.
+// Finds the first added line in a unified diff patch for inline comment placement
 const getFirstAddedLineFromPatch = (patch?: string): number | null => {
     if (!patch) return null;
 
@@ -304,7 +305,7 @@ const getFirstAddedLineFromPatch = (patch?: string): number | null => {
     return null;
 };
 
-// Extracts short actionable highlights from the model output.
+// Extracts short actionable highlights from the model output
 const extractAnalysisHighlights = (analysis: string): string[] => {
     const bullets = analysis
         .split("\n")
@@ -320,7 +321,7 @@ const extractAnalysisHighlights = (analysis: string): string[] => {
     return [analysis.replace(/\s+/g, " ").slice(0, 220)];
 };
 
-// Formats a review highlight as a GitHub suggestion block.
+// Formats a review highlight as a GitHub suggestion block
 const formatInlineSuggestionBody = (highlight: string): string => {
     const safeHighlight = highlight.replace(/```/g, "'''").trim();
     return [
@@ -333,7 +334,7 @@ const formatInlineSuggestionBody = (highlight: string): string => {
     ].join("\n");
 };
 
-// Maps analysis highlights to changed file locations and removes duplicate targets.
+// Maps analysis highlights to changed file locations and removes duplicate targets
 const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     const highlights = extractAnalysisHighlights(analysis);
     const candidates = files
@@ -360,9 +361,9 @@ const buildInlineComments = (files: GitHubChangedFile[], analysis: string) => {
     }));
 };
 
-// Generation-counter map for deduplicating concurrent async work on the same key.
+// Generation-counter map for deduplicating concurrent async work on the same key
 // Each new event for a key increments its generation; after the async work finishes,
-// results are only applied if the generation hasn't been superseded.
+// results are only applied if the generation hasn't been superseded
 const activeGenerations = new Map<string, number>();
 
 const nextGeneration = (key: string): number => {
@@ -381,8 +382,8 @@ const clearGeneration = (key: string, gen: number): void => {
     }
 };
 
-// Validates the webhook signature against the configured secret.
-// Rejects all requests when the secret is not configured — this is a hard requirement.
+// Validates the webhook signature against the configured secret
+// Rejects all requests when the secret is not configured — this is a hard requirement
 const verifyWebhookSignature = (req: Request): boolean => {
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
     if (!secret) {
@@ -405,21 +406,21 @@ const verifyWebhookSignature = (req: Request): boolean => {
     }
 };
 
-// Returns a validated positive integer installation ID, or null if invalid.
+// Returns a validated positive integer installation ID, or null if invalid
 const validateInstallationId = (installation?: { id?: unknown }): number | null => {
     const id = installation?.id;
     if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0 || id > Number.MAX_SAFE_INTEGER) return null;
     return id;
 };
 
-// Executes end-to-end PR analysis and posts summary plus inline comments.
-// Accepts a generation number so stale results from superseded events are discarded.
+// Executes end-to-end PR analysis and posts summary plus inline comments
+// Accepts a generation number so stale results from superseded events are discarded
 const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData: WebhookRepository, installationId: number, dedupKey: string, generation: number, planSlug: string, dbInstallationId: number | null) => {
     const owner = repoData.owner.login;
     const repo = repoData.name;
     const prNumber = prDataPayload.number;
 
-    // Enforce monthly review limit before touching OpenAI.
+    // Enforce monthly review limit before touching OpenAI
     if (dbInstallationId !== null) {
         const usageCheck = await checkAndIncrementUsage(dbInstallationId, planSlug).catch((): { allowed: boolean; reason?: string } => ({ allowed: true }));
         if (!usageCheck.allowed) {
@@ -434,7 +435,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         }
     }
 
-    // Post a placeholder comment so the author knows review is in progress.
+    // Post a placeholder comment so the author knows review is in progress
     let commentId: number | undefined;
     try {
         commentId = await createPRComment(
@@ -479,11 +480,13 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         }, "AI analysis failed — skipping comment posting");
         try {
             await updateOrPost("❌ **Prism AI** encountered an error while reviewing this pull request.");
-        } catch { /* best-effort */ }
+        } catch {
+            // best-effort
+        }
         throw err;
     }
 
-    // If a newer event arrived for this PR while we were analyzing, discard our results.
+    // If a newer event arrived for this PR while we were analyzing, discard our results
     if (!isCurrentGeneration(dedupKey, generation)) {
         logger.info({ prNumber, generation }, "Analysis superseded by newer event — discarding");
         return;
@@ -497,8 +500,8 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         suggestionCount: result.suggestions.length,
     }, "AI Review for PR");
 
-    // Post each inline-eligible finding as its own review comment on the relevant diff line.
-    // Each becomes its own thread so users can reply with per-finding feedback.
+    // Post each inline-eligible finding as its own review comment on the relevant diff line
+    // Each becomes its own thread so users can reply with per-finding feedback
     if (result.inlineFindings.length > 0) {
         try {
             const inlineComments = result.inlineFindings.map((f) => ({
@@ -515,7 +518,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
         }
     }
 
-    // Build lightweight summary: inline findings removed, only non-inline + counts.
+    // Build lightweight summary: inline findings removed, only non-inline + counts
     const summaryBody = generateSummary(
         result.nonInlineResults,
         result.recommendations,
@@ -532,7 +535,7 @@ const analyzeAndCommentOnPR = async (prDataPayload: WebhookPullRequest, repoData
     }
 };
 
-// Handles issue_comment webhook events for feedback processing.
+// Handles issue_comment webhook events for feedback processing
 const handleIssueCommentEvent = (req: Request, res: Response) => {
     if (!isValidIssueCommentPayload(req.body)) {
         return res.status(422).send("Invalid issue_comment payload");
@@ -566,7 +569,7 @@ const handlePullRequestReviewCommentEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
-// Handles pull_request webhook events for AI review.
+// Handles pull_request webhook events for AI review
 const handlePullRequestEvent = async (req: Request, res: Response) => {
     if (!isValidPRPayload(req.body)) {
         return res.status(422).send("Invalid pull_request payload");
@@ -595,7 +598,7 @@ const handlePullRequestEvent = async (req: Request, res: Response) => {
         }
 
         // On first PR opened for this repo, bootstrap in background to seed
-        // risk scoring data and RAG context from merged PR history.
+        // risk scoring data and RAG context from merged PR history
         if (action === "opened") {
             bootstrapRepo(repo.owner.login, repo.name, "HEAD", installationId).catch((err: unknown) => {
                 logger.warn({ repo: repo.full_name, message: getErrorMessage(err) }, "Background bootstrap failed");
@@ -605,7 +608,7 @@ const handlePullRequestEvent = async (req: Request, res: Response) => {
         const dedupKey = `pr:${repo.full_name}#${pr.number}`;
         const generation = nextGeneration(dedupKey);
 
-        // Track this review event in the database.
+        // Track this review event in the database
         const dbInstallation = installation ?? await getInstallationByGithubId(installationId).catch(() => null);
         const reviewEventId = dbInstallation
             ? await createReviewEvent(dbInstallation.id, repo.full_name, pr.number, "pr_review").catch(() => null)
@@ -632,14 +635,14 @@ const handlePullRequestEvent = async (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
-// Handles pull_request_review webhook events to update review coverage on the Prism comment.
+// Handles pull_request_review webhook events to update review coverage on the Prism comment
 const handlePullRequestReviewEvent = (req: Request, res: Response) => {
     if (!isValidPRReviewPayload(req.body)) {
         return res.status(422).send("Invalid pull_request_review payload");
     }
     const payload = req.body;
 
-    // Only react to newly submitted reviews, not edits or dismissals.
+    // Only react to newly submitted reviews, not edits or dismissals
     if (payload.action !== 'submitted') {
         return res.sendStatus(200);
     }
@@ -674,7 +677,7 @@ const handlePullRequestReviewEvent = (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
-// Handles push webhook events for incremental vector DB ingestion.
+// Handles push webhook events for incremental vector DB ingestion
 const handlePushEvent = async (req: Request, res: Response) => {
     if (!isValidPushPayload(req.body)) {
         return res.status(422).send("Invalid push payload");
@@ -682,7 +685,7 @@ const handlePushEvent = async (req: Request, res: Response) => {
     const payload = req.body;
     const { ref, after, commits, repository: repo } = payload;
 
-    // Only ingest pushes to the default branch (main or master).
+    // Only ingest pushes to the default branch (main or master)
     const branch = ref.replace('refs/heads/', '');
     if (branch !== 'main' && branch !== 'master') {
         return res.status(200).send("Non-default branch push ignored");
@@ -694,14 +697,14 @@ const handlePushEvent = async (req: Request, res: Response) => {
         return res.status(400).send("Missing or invalid installation.id");
     }
 
-    // Gate: ensure this installation is active in our database.
+    // Gate: ensure this installation is active in our database
     const installation = await getInstallationByGithubId(installationId).catch(() => null);
     if (installation && installation.status !== "active") {
         logger.warn({ installationId, status: installation.status }, "Push from non-active installation");
         return res.status(200).send("Installation not active");
     }
 
-    // Aggregate file changes across all commits in this push.
+    // Aggregate file changes across all commits in this push
     const changes: PushFileChange = { added: [], removed: [], modified: [] };
     for (const commit of commits) {
         if (Array.isArray(commit.added)) changes.added.push(...commit.added);
@@ -739,7 +742,7 @@ const handlePushEvent = async (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
-// Handles installation lifecycle events (created, deleted, suspend, unsuspend).
+// Handles installation lifecycle events (created, deleted, suspend, unsuspend)
 const handleInstallationEvent = async (req: Request, res: Response) => {
     if (!isValidInstallationPayload(req.body)) {
         return res.status(422).send("Invalid installation payload");
@@ -778,7 +781,7 @@ const handleInstallationEvent = async (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
-// Handles marketplace_purchase events for plan changes.
+// Handles marketplace_purchase events for plan changes
 const handleMarketplacePurchaseEvent = async (req: Request, res: Response) => {
     if (!isValidMarketplacePurchasePayload(req.body)) {
         return res.status(422).send("Invalid marketplace_purchase payload");
@@ -789,7 +792,7 @@ const handleMarketplacePurchaseEvent = async (req: Request, res: Response) => {
 
     logger.info({ action, account: account.login, plan: plan.name }, "Marketplace event received");
 
-    // Log every marketplace event for reconciliation.
+    // Log every marketplace event for reconciliation
     await logMarketplaceEvent(action, account.id, plan, req.body).catch((err: unknown) => {
         logger.error({ action, message: getErrorMessage(err) }, "Failed to log marketplace event");
     });
@@ -797,7 +800,7 @@ const handleMarketplacePurchaseEvent = async (req: Request, res: Response) => {
     try {
         switch (action) {
             case "purchased": {
-                // Upsert in case installation event hasn't arrived yet.
+                // Upsert in case installation event hasn't arrived yet
                 const installationId = validateInstallationId(req.body.installation);
                 if (installationId) {
                     await upsertInstallation({
@@ -809,13 +812,13 @@ const handleMarketplacePurchaseEvent = async (req: Request, res: Response) => {
                         planName: plan.name,
                     });
                 } else {
-                    // No installation ID in payload — try to find by account and update plan.
+                    // No installation ID in payload — try to find by account and update plan
                     logger.warn({ account: account.login }, "marketplace_purchase.purchased without installation.id");
                 }
                 break;
             }
             case "changed": {
-                // Plan upgrade/downgrade — find the installation by account and update.
+                // Plan upgrade/downgrade — find the installation by account and update
                 const installationId = validateInstallationId(req.body.installation);
                 if (installationId) {
                     await updateInstallationPlan(installationId, planSlug, plan.name);
@@ -839,7 +842,7 @@ const handleMarketplacePurchaseEvent = async (req: Request, res: Response) => {
     return res.sendStatus(200);
 };
 
-// Webhook entry point — verifies signature and routes to event-specific handlers.
+// Webhook entry point — verifies signature and routes to event-specific handlers
 export const handleWebhook = (req: Request, res: Response) => {
     if (!verifyWebhookSignature(req)) {
         return res.status(401).send("Unauthorized");
@@ -867,10 +870,8 @@ export const handleWebhook = (req: Request, res: Response) => {
     }
 };
 
-/*
- * Processes a feedback command left as a PR comment reply.
- * Parses the command, fetches the parent AI review comment, and stores the feedback.
- */
+// Processes a feedback command left as a PR comment reply
+// Parses the command, fetches the parent AI review comment, and stores the feedback
 interface FeedbackCommandContext {
     commentId: number;
     commentBody: string;
@@ -898,7 +899,7 @@ const processFeedbackCommand = async (context: FeedbackCommandContext): Promise<
         return;
     }
 
-    // Resolve the AI review text this feedback refers to.
+    // Resolve the AI review text this feedback refers to
     let aiReviewSnippet = '';
     const parentId = context.inReplyToId;
     if (parentId) {

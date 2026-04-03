@@ -55,7 +55,7 @@ const parseFinding = (raw: string): ParsedFinding | null => {
   };
 };
 
-// Strips line number prefixes ("42 | code") from processed content, returning raw source lines.
+// Strips line number prefixes ("42 | code") from processed content, returning raw source lines
 const getSourceLines = (content: string): string[] =>
   content.split('\n').map((line) => {
     const m = line.match(/^\d+\s*\|\s?(.*)/);

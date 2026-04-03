@@ -1,5 +1,5 @@
-// Computes a PR risk score from git history signals and changed file characteristics.
-// The score drives dynamic review intensity — not dashboards or manager reports.
+// Computes a PR risk score from git history signals and changed file characteristics
+// The score drives dynamic review intensity — not dashboards or manager reports
 import { fetchFileCommitStats, type FileCommitStats } from './githubService';
 import { logger } from './logger';
 
@@ -32,11 +32,11 @@ const WEIGHT_SIZE = 0.25;
 const WEIGHT_SPREAD = 0.20;
 const WEIGHT_TIMING = 0.20;
 
-// Converts a file's commit count into a 0-100 churn score.
+// Converts a file's commit count into a 0-100 churn score
 const churnScore = (commitCount: number): number =>
   Math.min(100, Math.round((commitCount / CHURN_HIGH) * 100));
 
-// Scores PR size: more files and larger diffs = higher risk.
+// Scores PR size: more files and larger diffs = higher risk
 const sizeScore = (fileCount: number): number => {
   if (fileCount <= 2) return 10;
   if (fileCount <= 5) return 30;
@@ -45,7 +45,7 @@ const sizeScore = (fileCount: number): number => {
   return 100;
 };
 
-// Scores directory spread: files touching many different directories = harder to review.
+// Scores directory spread: files touching many different directories = harder to review
 const spreadScore = (filePaths: string[]): number => {
   const dirs = new Set(
     filePaths.map((p) => {
@@ -59,7 +59,7 @@ const spreadScore = (filePaths: string[]): number => {
   return 90;
 };
 
-// Scores timing risk: late-week or late-day PRs correlate with higher regression rates.
+// Scores timing risk: late-week or late-day PRs correlate with higher regression rates
 const timingScore = (): number => {
   const now = new Date();
   const day = now.getUTCDay();   // 0=Sun, 5=Fri, 6=Sat
@@ -83,7 +83,7 @@ const levelFromScore = (score: number): RiskLevel => {
   return 'low';
 };
 
-// Builds human-readable signals injected into analysis prompts.
+// Builds human-readable signals injected into analysis prompts
 const buildSignals = (
   fileRisks: FileRisk[],
   fileCount: number,
@@ -130,7 +130,7 @@ const buildSignals = (
   return signals;
 };
 
-// Builds actionable recommendations for the review footer (visible to the PR author).
+// Builds actionable recommendations for the review footer (visible to the PR author)
 const buildRecommendations = (
   fileRisks: FileRisk[],
   fileCount: number,
@@ -161,11 +161,9 @@ const buildRecommendations = (
   return recs;
 };
 
-/*
- * Computes a risk assessment for a PR based on git history and PR characteristics.
- * Returns signals that are injected into analysis prompts (making the AI more thorough
- * in risky areas) and recommendations shown in the review footer.
- */
+// Computes a risk assessment for a PR based on git history and PR characteristics
+// Returns signals that are injected into analysis prompts (making the AI more thorough
+// in risky areas) and recommendations shown in the review footer
 export const assessPRRisk = async (
   owner: string,
   repo: string,
@@ -187,7 +185,7 @@ export const assessPRRisk = async (
     };
   }
 
-  // Build per-file risk profiles.
+  // Build per-file risk profiles
   const fileRisks: FileRisk[] = commitStats.map((stat) => ({
     path: stat.path,
     churnScore: churnScore(stat.commitCount),
@@ -196,7 +194,7 @@ export const assessPRRisk = async (
     commitCount: stat.commitCount,
   }));
 
-  // Composite score from four weighted dimensions.
+  // Composite score from four weighted dimensions
   const avgChurn = fileRisks.length > 0
     ? fileRisks.reduce((sum, f) => sum + f.churnScore, 0) / fileRisks.length
     : 0;

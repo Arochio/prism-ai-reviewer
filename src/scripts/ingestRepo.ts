@@ -1,5 +1,5 @@
 // LOCAL-ONLY cold-start script — indexes every tracked file in the repo into Pinecone.
-// For ongoing ingestion, the server handles `push` webhook events automatically.
+// For ongoing ingestion, the server handles `push` webhook events automatically
 // Usage: npx ts-node src/scripts/ingestRepo.ts [--dry-run]
 
 import 'dotenv/config';
@@ -9,13 +9,13 @@ import * as path from 'path';
 import { createEmbedding, storeEmbedding } from '../services/vectorService';
 import { logger } from '../services/logger';
 
-// Maximum content stored in Pinecone metadata per record (Pinecone 40KB limit).
+// Maximum content stored in Pinecone metadata per record (Pinecone 40KB limit)
 const MAX_CONTENT_CHARS = 2000;
 
-// Concurrency limit to avoid hitting OpenAI rate limits.
+// Concurrency limit to avoid hitting OpenAI rate limits
 const CONCURRENCY = 5;
 
-// Binary / non-textual extensions to skip.
+// Binary / non-textual extensions to skip
 const SKIP_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.webp',
   '.woff', '.woff2', '.ttf', '.eot',
@@ -24,7 +24,7 @@ const SKIP_EXTENSIONS = new Set([
   '.lock', '.pem',
 ]);
 
-// Paths that should never be indexed.
+// Paths that should never be indexed
 const SKIP_PATHS = ['node_modules', 'dist', '.git', '.env'];
 
 const isDryRun = process.argv.includes('--dry-run');
@@ -35,11 +35,11 @@ const shouldSkip = (filePath: string): boolean => {
   return SKIP_PATHS.some((skip) => filePath.startsWith(skip) || filePath.includes(`/${skip}/`) || filePath.includes(`\\${skip}\\`));
 };
 
-// Reads file content safely, returning null for binary or unreadable files.
+// Reads file content safely, returning null for binary or unreadable files
 const readFileSafe = (filePath: string): string | null => {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
-    // Simple binary detection: if the first 8KB has null bytes, skip it.
+    // Simple binary detection: if the first 8KB has null bytes, skip it
     if (content.slice(0, 8192).includes('\0')) return null;
     return content;
   } catch {
@@ -47,7 +47,7 @@ const readFileSafe = (filePath: string): string | null => {
   }
 };
 
-// Processes a batch of files with bounded concurrency.
+// Processes a batch of files with bounded concurrency
 const processBatch = async (
   files: string[],
   handler: (file: string) => Promise<void>,
@@ -71,7 +71,7 @@ const main = async () => {
     process.exit(1);
   }
 
-  // Use git ls-files to respect .gitignore.
+  // Use git ls-files to respect .gitignore
   const tracked = execSync('git ls-files', { encoding: 'utf-8' })
     .split('\n')
     .map((f) => f.trim())

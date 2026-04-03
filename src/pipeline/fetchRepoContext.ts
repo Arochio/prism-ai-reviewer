@@ -10,7 +10,7 @@ export interface RepoInfo {
   repo: string;
   headSha: string;
   installationId: number;
-  /** Plan slug for the installation — used for feature gating in the analysis pipeline. */
+  // Plan slug for the installation — used for feature gating in the analysis pipeline
   planSlug?: string;
 }
 
@@ -19,7 +19,7 @@ export interface RepoContextResult {
   customRules: string;
 }
 
-// Extensions considered source code for context fetching.
+// Extensions considered source code for context fetching
 const SOURCE_EXTENSIONS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
   '.py', '.rb', '.go', '.rs', '.java', '.kt',
@@ -28,7 +28,7 @@ const SOURCE_EXTENSIONS = new Set([
   '.json', '.yaml', '.yml', '.toml',
 ]);
 
-// Paths that should never be fetched for context.
+// Paths that should never be fetched for context
 const SKIP_PATHS = ['node_modules', 'dist', '.git', '.env', 'vendor', '__pycache__'];
 
 const isSourceFile = (entry: GitHubTreeEntry): boolean => {
@@ -44,12 +44,12 @@ const isSkippedPath = (filePath: string): boolean =>
     filePath.startsWith(skip + '/') || filePath.includes('/' + skip + '/')
   );
 
-// Scores a repo file by how closely related it is to the changed files.
-// Higher score = more relevant.
+// Scores a repo file by how closely related it is to the changed files
+// Higher score = more relevant
 const scoreRelevance = (repoPath: string, changedFiles: ProcessedFile[]): number => {
   let score = 0;
   for (const changed of changedFiles) {
-    // Same directory gets a high score.
+    // Same directory gets a high score
     const changedDir = changed.filename.includes('/')
       ? changed.filename.slice(0, changed.filename.lastIndexOf('/'))
       : '';
@@ -58,7 +58,7 @@ const scoreRelevance = (repoPath: string, changedFiles: ProcessedFile[]): number
       : '';
     if (changedDir && repoDir === changedDir) score += 10;
 
-    // Shared parent directory.
+    // Shared parent directory
     const changedParts = changed.filename.split('/');
     const repoParts = repoPath.split('/');
     let commonDepth = 0;
@@ -68,7 +68,7 @@ const scoreRelevance = (repoPath: string, changedFiles: ProcessedFile[]): number
     }
     score += commonDepth * 3;
 
-    // File is imported / referenced in the changed file's content.
+    // File is imported / referenced in the changed file's content
     const baseName = repoPath.includes('/')
       ? repoPath.slice(repoPath.lastIndexOf('/') + 1)
       : repoPath;
@@ -80,7 +80,7 @@ const scoreRelevance = (repoPath: string, changedFiles: ProcessedFile[]): number
   return score;
 };
 
-// Formats the tree listing as a compact directory structure.
+// Formats the tree listing as a compact directory structure
 const formatTreeListing = (entries: GitHubTreeEntry[]): string => {
   const paths = entries
     .filter((e) => e.type === 'blob' && !isSkippedPath(e.path))
@@ -88,24 +88,22 @@ const formatTreeListing = (entries: GitHubTreeEntry[]): string => {
   return paths.join('\n');
 };
 
-/*
- * Fetches the repo tree and content of the most relevant source files,
- * returning a context block ready for injection into analysis prompts.
- * Also fetches .prism-rules and combines with global rules.
- */
+// Fetches the repo tree and content of the most relevant source files,
+// returning a context block ready for injection into analysis prompts
+// Also fetches .prism-rules and combines with global rules
 export const fetchRepoContext = async (
   repoInfo: RepoInfo,
   changedFiles: ProcessedFile[]
 ): Promise<RepoContextResult> => {
   const { owner, repo, headSha, installationId } = repoInfo;
 
-  // Fetch tree and .prism-rules in parallel.
+  // Fetch tree and .prism-rules in parallel
   const [tree, repoRules] = await Promise.all([
     fetchRepoTree(owner, repo, headSha, installationId),
     fetchRepoRules(owner, repo, headSha, installationId),
   ]);
 
-  // Assemble custom rules from global env + per-repo .prism-rules file.
+  // Assemble custom rules from global env + per-repo .prism-rules file
   const globalRules = (process.env.PRISM_GLOBAL_RULES || '').trim();
   const rulesSections: string[] = [];
   if (globalRules) rulesSections.push(globalRules);
@@ -121,7 +119,7 @@ export const fetchRepoContext = async (
 
   const treeListing = formatTreeListing(tree);
 
-  // Identify and rank source files not already in the changed set.
+  // Identify and rank source files not already in the changed set
   const changedPaths = new Set(changedFiles.map((f) => f.filename));
   const candidates = tree
     .filter((e) => isSourceFile(e) && !isSkippedPath(e.path) && !changedPaths.has(e.path))

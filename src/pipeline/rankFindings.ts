@@ -1,4 +1,4 @@
-// Merges findings from all analysis passes and orders them by severity.
+// Merges findings from all analysis passes and orders them by severity
 
 export type PassLabel = 'Bugs & Security' | 'Design' | 'Performance';
 
@@ -15,24 +15,22 @@ const SEVERITY_ORDER: Record<string, number> = {
   low: 3,
 };
 
-// Extracts bullet lines from a pass output string.
+// Extracts bullet lines from a pass output string
 const extractBullets = (raw: string): string[] =>
   raw
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.startsWith('- ['));
 
-// Returns the numeric severity rank for a finding line.
+// Returns the numeric severity rank for a finding line
 const severityOf = (finding: string): number => {
   const match = finding.match(/^-\s*\[(\w+)\]/i);
   const label = match?.[1]?.toLowerCase() ?? '';
   return SEVERITY_ORDER[label] ?? 99;
 };
 
-/*
- * Converts raw pass outputs into structured PassResult objects and sorts each
- * finding list from highest to lowest severity.
- */
+// Converts raw pass outputs into structured PassResult objects and sorts each
+// finding list from highest to lowest severity
 export const rankFindings = (
   bugRaw: string,
   designRaw: string,

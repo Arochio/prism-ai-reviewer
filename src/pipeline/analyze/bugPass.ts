@@ -1,4 +1,4 @@
-// Bug pass: detects correctness errors, security vulnerabilities, and runtime risks.
+// Bug pass: detects correctness errors, security vulnerabilities, and runtime risks
 import type { ProcessedFile } from '../extractDiff';
 
 const BUG_PASS_SYSTEM_PROMPT =
@@ -43,9 +43,7 @@ const buildUserContent = (files: ProcessedFile[], repoContext: string, customRul
   return `${repoContext}${customRules}\n\n<changed_files>\n${changedSection}\n</changed_files>`;
 };
 
-/*
- * Runs the bug and security analysis pass against the provided processed files.
- */
+// Runs the bug and security analysis pass against the provided processed files
 export const runBugPass = async (
   files: ProcessedFile[],
   callOpenAI: (systemPrompt: string, userContent: string) => Promise<string>,
