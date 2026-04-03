@@ -28,7 +28,7 @@ const PERFORMANCE_PASS_SYSTEM_PROMPT =
   '- Reference line numbers from the line-numbered source (e.g. L42). Use the diff to identify what changed and the full source for surrounding context.\n\n' +  'If a <risk_signals> section is present, increase your scrutiny on the flagged files and areas. Risk signals come from git history analysis.\n' +  'If a <custom_review_rules> section is present, those rules are mandatory and override defaults.\n' +
   'If a <feedback_rules> section is present, follow those DO/DO NOT rules strictly — they come from real user feedback on past reviews.\n\n' +
   'For each finding output exactly one bullet:\n' +
-  '`- [<severity>] <filename>:L<line_number>: <description>. Problematic code: \`<exact snippet>\``\n' +
+  '`- [<severity>] <filename>:L<line_number>: <description>. Problematic code: `<exact snippet>`\n' +
   'Severity must be one of: High, Medium, Low. The line_number MUST match the line-numbered source provided.\n' +
   'If no issues are found, respond with exactly: No performance findings.';
 

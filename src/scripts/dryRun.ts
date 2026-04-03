@@ -18,7 +18,6 @@ import { rankFindings } from '../pipeline/rankFindings';
 import { generateSummary } from '../pipeline/generateSummary';
 import { callOpenAI } from '../services/openaiService';
 import { openAIConfig } from '../config/openai.config';
-import { logger } from '../services/logger';
 
 const SKIP_PATHS = ['node_modules', 'dist', '.git', '.env', 'package-lock.json'];
 
