@@ -11,6 +11,9 @@ import { logger } from "./services/logger";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust Railway's proxy so express-rate-limit can identify clients correctly
+app.set('trust proxy', 1);
+
 // Validates all required configuration at startup so misconfigurations appear
 // immediately instead of failing silently on the first webhook
 const validateStartupConfig = async () => {
@@ -102,8 +105,12 @@ const validateStartupConfig = async () => {
   logger.info("Startup validation passed");
 };
 
-// Parses incoming webhook JSON payloads
-app.use(express.json());
+// Parses incoming webhook JSON payloads and captures the raw body for signature verification
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    (req as express.Request & { rawBody: Buffer }).rawBody = buf;
+  }
+}));
 
 app.get("/", (req, res) => {
   res.send("AI PR Reviewer is running");
