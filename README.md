@@ -2,8 +2,6 @@
 
 A GitHub Marketplace App that performs multi-pass AI code review — posting inline findings with one-click fix suggestions directly on the diff, silently profiling developers, and recommending reviewers based on contribution history.
 
-Available on the [GitHub Marketplace](https://github.com/marketplace/prismai-reviewer).
-
 ---
 
 ## How It Works
