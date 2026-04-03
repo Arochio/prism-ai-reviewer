@@ -21,8 +21,42 @@ import { openAIConfig } from '../config/openai.config';
 
 const SKIP_PATHS = ['node_modules', 'dist', '.git', '.env', 'package-lock.json'];
 
-const shouldSkip = (filePath: string): boolean =>
-  SKIP_PATHS.some((skip) => filePath.startsWith(skip) || filePath.includes(`/${skip}`));
+// File extensions to analyze (skip config files, images, etc.)
+const CODE_EXTENSIONS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+  '.py', '.java', '.go', '.rs', '.rb', '.php',
+  '.cs', '.cpp', '.c', '.h', '.hpp',
+  '.sql', '.sh', '.yml', '.yaml', '.json', '.xml',
+  '.css', '.scss', '.less', '.html',
+]);
+
+const isCodeFile = (filePath: string): boolean => {
+  const ext = filePath.substring(filePath.lastIndexOf('.'));
+  return CODE_EXTENSIONS.has(ext.toLowerCase());
+};
+
+const shouldSkip = (filePath: string): boolean => {
+  // Check SKIP_PATHS
+  if (SKIP_PATHS.some((skip) => filePath.startsWith(skip) || filePath.includes(`/${skip}`))) {
+    return true;
+  }
+
+  // Skip non-code files
+  if (!isCodeFile(filePath)) {
+    return true;
+  }
+
+  // Check .gitignore
+  try {
+    execSync(`git check-ignore "${filePath}"`, {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'] // silent
+    });
+    return true; // File is in .gitignore
+  } catch {
+    return false; // File is not in .gitignore or git not available
+  }
+};
 
 const readFileSafe = (filePath: string): string | null => {
   try {
@@ -104,7 +138,8 @@ const main = async () => {
 
   console.log(`Readable files: ${analyzableFiles.length}`);
 
-  const processedFiles = extractDiff(analyzableFiles);
+  // For dry runs, analyze all files (no limit)
+  const processedFiles = extractDiff(analyzableFiles, Infinity);
   console.log(`After filtering: ${processedFiles.length} files\n`);
 
   if (processedFiles.length === 0) {

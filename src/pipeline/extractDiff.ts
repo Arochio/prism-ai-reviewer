@@ -54,12 +54,14 @@ const toProcessedFile = (f: AnalyzableFile): ProcessedFile => {
   };
 };
 
-export const extractDiff = (files: AnalyzableFile[]): ProcessedFile[] => {
+export const extractDiff = (files: AnalyzableFile[], fileLimit?: number): ProcessedFile[] => {
   if (!Array.isArray(files)) return [];
+
+  const limit = fileLimit ?? openAIConfig.totalFilesLimit;
 
   return files
     .filter(isValidFile)
-    .slice(0, openAIConfig.totalFilesLimit)
+    .slice(0, limit)
     .filter(isIncludedFile)
     .map(toProcessedFile);
 };
