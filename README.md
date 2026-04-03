@@ -181,6 +181,8 @@ Set your GitHub App webhook URL to `https://<ngrok-url>/webhook` with content ty
 | `OPENAI_VALIDATION_PASS_MODEL` | `gpt-4o-mini` | Validation (false-positive filter) |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Fallback default |
 
+Any model supporting the standard chat completions API can be used (e.g. `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`). Reasoning models (`o1`, `o3`, `o4-mini`) are not supported — they reject the `temperature`, `top_p`, and penalty parameters.
+
 ### Optional Tuning
 
 | Variable | Default | Description |
@@ -250,7 +252,9 @@ Global rules that apply across all repos can be set via the `PRISM_GLOBAL_RULES`
 | `npm test` | Run test suite (Vitest) |
 | `npm run lint` | Lint with ESLint |
 | `npm run ingest` | One-time full repo ingestion into Pinecone |
-| `npm run dry-run` | Test analysis pipeline without posting GitHub comments |
+| `npm run dry-run` | Test analysis pipeline without posting GitHub comments (analyzes git-staged files by default) |
+| `npm run dry-run -- --all` | Dry run against all tracked code files (respects `.gitignore`) |
+| `npm run dry-run -- --files src/foo.ts src/bar.ts` | Dry run against specific files |
 
 ---
 
