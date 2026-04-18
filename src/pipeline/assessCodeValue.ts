@@ -112,7 +112,7 @@ export const assessCodeValue = (files: ProcessedFile[], ranked: PassResult[]): C
   // Sum added lines across all file patches
   const linesAdded = files.reduce((sum, f) => sum + countAddedLines(f.patch), 0);
 
-  // Quantity: log₁₀ scale — 10 lines ≈ 33, 100 lines ≈ 67, 1000 lines = 100
+  // Quantity: log10 scale - 10 lines ~= 33, 100 lines ~= 67, 1000 lines = 100
   const quantityScore = linesAdded === 0
     ? 0
     : Math.min(100, Math.round((Math.log10(linesAdded + 1) / 3) * 100));
