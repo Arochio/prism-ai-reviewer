@@ -125,7 +125,7 @@ PRismAI-Reviewer is designed for one-click deployment on [Railway](https://railw
 3. Add a **PostgreSQL** addon — `DATABASE_URL` is injected automatically
 4. Add all required environment variables (see below)
 5. Railway builds via `Dockerfile` and runs `start.sh`, which runs DB migrations then starts the server
-6. Set your GitHub App webhook URL to your Railway public domain: `https://YOUR-DOMAIN/webhook`
+6. Set your GitHub App or repository webhook URL to your Railway public domain: `https://YOUR-DOMAIN/webhook`
 
 The `/health` endpoint (`GET /health`) returns `{ "status": "ok" }` and is used by Railway's healthcheck.
 
@@ -133,7 +133,7 @@ The `/health` endpoint (`GET /health`) returns `{ "status": "ok" }` and is used 
 
 **Prerequisites**
 - Node.js 20+
-- A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) (see permissions below)
+- A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) **or** a [repository/organization webhook](https://docs.github.com/en/webhooks/using-webhooks/creating-webhooks) (see GitHub Configuration below)
 - OpenAI API key
 - Pinecone index (dimension **1536**, metric **cosine**)
 - PostgreSQL database
@@ -153,7 +153,7 @@ Expose the local server:
 ngrok http 3000
 ```
 
-Set your GitHub App webhook URL to `https://<ngrok-url>/webhook` with content type `application/json`.
+Set your GitHub App or repository webhook URL to `https://<ngrok-url>/webhook` with content type `application/json`.
 
 ---
 
@@ -163,9 +163,9 @@ Set your GitHub App webhook URL to `https://<ngrok-url>/webhook` with content ty
 
 | Variable | Description |
 |---|---|
-| `GITHUB_APP_ID` | GitHub App numeric ID |
-| `GITHUB_PRIVATE_KEY` | PEM private key (use `\n` for newlines in a single-line string) |
-| `GITHUB_WEBHOOK_SECRET` | Webhook secret set in GitHub App settings |
+| `GITHUB_APP_ID` | GitHub App numeric ID *(GitHub App only)* |
+| `GITHUB_PRIVATE_KEY` | PEM private key (use `\n` for newlines in a single-line string) *(GitHub App only)* |
+| `GITHUB_WEBHOOK_SECRET` | Webhook secret (set in GitHub App settings or webhook config) |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `PINECONE_API_KEY` | Pinecone API key |
 | `PINECONE_INDEX_NAME` | Pinecone index name (dimension 1536, cosine metric) |
@@ -204,7 +204,9 @@ Any model supporting the standard chat completions API can be used (e.g. `gpt-4.
 
 ---
 
-## GitHub App Configuration
+## GitHub Configuration
+
+PRismAI-Reviewer can receive events via a **GitHub App** (recommended — required for Marketplace listing, per-installation auth, and the `installation`/`marketplace_purchase` lifecycle events) or a plain **repository/organization webhook** (simpler self-hosted setup, no Marketplace features).
 
 ### Permissions
 
